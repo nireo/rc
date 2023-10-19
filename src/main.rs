@@ -1,4 +1,5 @@
 mod sexpr;
+mod ir;
 use sexpr::*;
 
 fn main() {
