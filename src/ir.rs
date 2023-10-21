@@ -21,7 +21,7 @@ impl std::fmt::Display for IrErrors {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
-enum Type {
+pub enum Type {
   Int,
   Byte,
   IntPtr,
@@ -30,7 +30,7 @@ enum Type {
 }
 
 #[derive(PartialEq, Debug)]
-enum Binop {
+pub enum Binop {
   Plus,
   Minus,
   Multiply,
@@ -38,17 +38,34 @@ enum Binop {
 }
 
 #[derive(PartialEq, Debug)]
-enum Unop {
+pub enum Unop {
   Minus,
   Not,
 }
 
 #[derive(PartialEq, Debug)]
-enum Instruction {
+pub enum Instruction {
   Constant(i64, i64),
   Label(i64),
   Binop(Binop, i64, i64, i64, bool),
   Mov(i64, i64),
+}
+
+impl std::fmt::Display for Instruction {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::Constant(a, b) => write!(f, "const {} {}", a, b),
+      Self::Label(l) => write!(f, "label {}", l),
+      Self::Binop(_, lhs, rhs, dst, is_byte) => {
+        if *is_byte {
+          write!(f, "binop8 TODO {} {} {}", lhs, rhs, dst)
+        } else {
+          write!(f, "binop TODO {} {} {}", lhs, rhs, dst)
+        }
+      }
+      Self::Mov(a, b) => write!(f, "mov {} {}", a, b),
+    }
+  }
 }
 
 type Types = Vec<Type>;
@@ -60,14 +77,22 @@ struct Scope<'a> {
   names: HashMap<&'a str, TypeIndex>,
 }
 
-struct Func<'a> {
+pub struct Func<'a> {
   scope: Scope<'a>,
   nvar: i64,
   stack: i64,
-  instructions: Vec<Instruction>,
+  pub instructions: Vec<Instruction>,
 }
 
 impl<'a> Scope<'a> {
+  fn new(prev: Option<Box<Scope<'a>>>) -> Self {
+    Self {
+      prev,
+      nlocals: 0,
+      names: HashMap::new(),
+    }
+  }
+
   fn get_var(&self, name: &str) -> Option<TypeIndex> {
     match self.names.get(name) {
       Some(val) => Some(val.to_owned()),
@@ -83,6 +108,15 @@ impl<'a> Scope<'a> {
 }
 
 impl<'a> Func<'a> {
+  pub fn new() -> Self {
+    Self {
+      scope: Scope::new(None),
+      instructions: Vec::new(),
+      stack: 0,
+      nvar: 0,
+    }
+  }
+
   fn tmp(&mut self) -> i64 {
     let dst = self.stack;
     self.stack += 1;
@@ -104,7 +138,7 @@ impl<'a> Func<'a> {
     }
   }
 
-  fn comp_expr(&mut self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
+  pub fn comp_expr(&mut self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
     if allow_var {
       assert!((self.stack == self.nvar), "stack != nvar when allow_var");
     }
@@ -122,7 +156,7 @@ impl<'a> Func<'a> {
     self.stack = if allow_var { self.nvar } else { save };
 
     // The result is either a temporary stored at the top of the stack or a local variable.
-    assert!((var < self.stack), "returned addr outside of stack.");
+    assert!((var <= self.stack), "returned addr outside of stack.");
     Ok(type_index)
   }
 
@@ -141,7 +175,7 @@ impl<'a> Func<'a> {
         self.instructions.push(Instruction::Constant(*num as i64, dst));
         Ok((vec![Type::Int, Type::Byte, Type::BytePtr], dst))
       }
-      SExp::Str(val) => todo!()
+      SExp::Str(_) => todo!()
     }
   }
 
