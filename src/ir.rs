@@ -24,9 +24,7 @@ impl std::fmt::Display for IrErrors {
 pub enum Type {
   Int,
   Byte,
-  IntPtr,
   BytePtr,
-  Void,
 }
 
 #[derive(PartialEq, Debug)]
@@ -35,6 +33,31 @@ pub enum Binop {
   Minus,
   Multiply,
   Divide,
+}
+
+impl std::str::FromStr for Binop {
+  type Err = anyhow::Error;
+
+  fn from_str(s: &str) -> std::result::Result<Self, Self::Err> { 
+    match s {
+      "+" => Ok(Self::Plus),
+      "-" => Ok(Self::Minus),
+      "/" => Ok(Self::Divide),
+      "*" => Ok(Self::Multiply),
+      _ => Err(anyhow!("unsupported binary operation"))
+    }
+  }
+}
+
+impl std::fmt::Display for Binop {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::Minus => write!(f, "-"),
+      Self::Multiply => write!(f, "*"),
+      Self::Divide => write!(f, "/"),
+      Self::Plus => write!(f, "+"),
+    }
+  }
 }
 
 #[derive(PartialEq, Debug)]
@@ -56,11 +79,11 @@ impl std::fmt::Display for Instruction {
     match self {
       Self::Constant(a, b) => write!(f, "const {} {}", a, b),
       Self::Label(l) => write!(f, "label {}", l),
-      Self::Binop(_, lhs, rhs, dst, is_byte) => {
+      Self::Binop(ty, lhs, rhs, dst, is_byte) => {
         if *is_byte {
-          write!(f, "binop8 TODO {} {} {}", lhs, rhs, dst)
+          write!(f, "binop8 {} {} {} {}", ty, lhs, rhs, dst)
         } else {
-          write!(f, "binop TODO {} {} {}", lhs, rhs, dst)
+          write!(f, "binop {} {} {} {}", ty, lhs, rhs, dst)
         }
       }
       Self::Mov(a, b) => write!(f, "mov {} {}", a, b),
