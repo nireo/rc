@@ -364,14 +364,3 @@ impl<'a> SExp<'a> {
     unsafe { Ok(String::from_utf8_unchecked(m)) }
   }
 }
-
-pub const SEXP_STRUCT: SExp<'static> = List(&[
-  List(&[Str("data"), Str("quoted data"), F64(123.), F64(4.5)]),
-  List(&[
-    Str("data"),
-    List(&[Str("!@#"), List(&[F64(4.5)]), Str("(more"), Str("data)")]),
-  ]),
-]);
-
-pub const SEXP_STRING_IN: &str = r#"((data "quoted data" 123 4.5)
-(data (!@# (4.5) "(more" "data)")))"#;

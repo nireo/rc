@@ -3,11 +3,14 @@ mod sexpr;
 use sexpr::*;
 
 fn main()  {
-  let ctx = &mut ParseContext::new("(+ 1 2)");
+  let ctx = &mut ParseContext::new("(do (var test 10) (set test 15))");
   let parsed = SExp::parse(ctx).unwrap();
 
   let mut top_level_func = ir::Func::new();
-  let _ = top_level_func.comp_expr(&parsed, true);
+  let res = top_level_func.comp_expr(&parsed, true);
+  if res.is_err() {
+    println!("got err {}", res.err().unwrap())
+  }
 
   top_level_func.instructions.iter().for_each(|inst| println!("{}", inst));
 }
