@@ -15,6 +15,9 @@ enum IrErrors {
   BadVariableSetType,
   VariableNotFound,
   ExpectedBooleanCondition,
+  BreakOutsideLoop,
+  ContinueOutsideLoop,
+  BadConditionType,
 }
 
 impl std::fmt::Display for IrErrors {
@@ -28,6 +31,9 @@ impl std::fmt::Display for IrErrors {
       Self::VariableNotFound => write!(f, "Variable not found"),
       Self::BadVariableSetType => write!(f, "Bad variable set type"),
       Self::ExpectedBooleanCondition => write!(f, "Expected boolean condition"),
+      Self::BreakOutsideLoop => write!(f, "Break outside loop"),
+      Self::ContinueOutsideLoop => write!(f, "Continue outside loop"),
+      Self::BadConditionType => write!(f, "Bad condition type"),
     }
   }
 }
@@ -46,6 +52,7 @@ pub enum Binop {
   Minus,
   Multiply,
   Divide,
+  GT,
 }
 
 impl std::str::FromStr for Binop {
@@ -57,6 +64,7 @@ impl std::str::FromStr for Binop {
       "-" => Ok(Self::Minus),
       "/" => Ok(Self::Divide),
       "*" => Ok(Self::Multiply),
+      "gt" => Ok(Self::GT),
       _ => Err(anyhow!("unsupported binary operation")),
     }
   }
@@ -69,6 +77,7 @@ impl std::fmt::Display for Binop {
       Self::Multiply => write!(f, "*"),
       Self::Divide => write!(f, "/"),
       Self::Plus => write!(f, "+"),
+      Self::GT => write!(f, "gt"),
     }
   }
 }
@@ -137,6 +146,8 @@ struct Scope<'a> {
   nlocals: i64,
   names: HashMap<&'a str, TypeIndex>,
   save: i64,
+  loop_start: i64,
+  loop_end: i64,
 }
 
 pub struct Func<'a> {
@@ -149,12 +160,21 @@ pub struct Func<'a> {
 
 impl<'a> Scope<'a> {
   fn new(prev: Option<Rc<RefCell<Scope<'a>>>>) -> Self {
-    Self {
+    let mut scope = Self {
       prev,
       nlocals: 0,
       names: HashMap::new(),
       save: 0,
+      loop_end: -1,
+      loop_start: -1,
+    };
+
+    if let Some(ref p) = scope.prev {
+      scope.loop_start = p.borrow().loop_start;
+      scope.loop_start = p.borrow().loop_end;
     }
+
+    scope
   }
 
   fn get_var(&self, name: &str) -> Result<TypeIndex> {
@@ -281,6 +301,28 @@ impl<'a> Func<'a> {
           Err(anyhow!(IrErrors::UnknownExpression))
         }
       }
+      "break" => {
+        check_len!(list, 1)?;
+        if self.scope.borrow().loop_end < 0 {
+          Err(anyhow!(IrErrors::BreakOutsideLoop))
+        } else {
+          self.instructions.push(Instruction::Jmp(self.scope.borrow().loop_end));
+          Ok((vec![Type::Void], -1))
+        }
+      }
+      "continue" => {
+        check_len!(list, 1)?;
+        if self.scope.borrow().loop_start < 0 {
+          Err(anyhow!(IrErrors::ContinueOutsideLoop))
+        } else {
+          self.instructions.push(Instruction::Jmp(self.scope.borrow().loop_start));
+          Ok((vec![Type::Void], -1))
+        }
+      }
+      "loop" => {
+        check_len!(list, 3)?;
+        self.comp_loop(sexpr)
+      }
       _ => Err(anyhow!(IrErrors::UnknownExpression)),
     }
   }
@@ -297,6 +339,30 @@ impl<'a> Func<'a> {
     if let Some(prev_scope) = prev_scope {
       self.scope = prev_scope;
     }
+  }
+
+  fn comp_loop(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
+    let list = sexpr.as_list()?;
+    self.scope.borrow_mut().loop_start = self.new_label();
+    self.scope.borrow_mut().loop_end = self.new_label();
+    let loop_start = self.scope.borrow().loop_start;
+    let loop_end = self.scope.borrow().loop_end;
+
+    self.enter_scope();
+    self.set_label(loop_start);
+
+    let (_, var) = self.comp_expr(&list[1], true)?;
+    if var < 0 {
+      return Err(anyhow!(IrErrors::BadConditionType));
+    }
+    self.instructions.push(Instruction::Jmpf(var, self.scope.borrow().loop_end));
+    let _ = self.comp_expr(&list[2], false)?;
+
+    self.instructions.push(Instruction::Jmp(self.scope.borrow().loop_start));
+    self.set_label(loop_end);
+    self.leave_scope();
+
+    Ok((vec![Type::Void], -1))
   }
 
   fn comp_scope(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
@@ -352,7 +418,7 @@ impl<'a> Func<'a> {
           .push(Instruction::Constant(*num as i64, dst));
         Ok((vec![Type::Int, Type::Byte, Type::BytePtr], dst))
       }
-      SExp::Str(_) => todo!(),
+      SExp::Str(s) => self.get_var(s)
     }
   }
 
