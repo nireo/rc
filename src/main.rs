@@ -3,7 +3,7 @@ mod sexpr;
 use sexpr::*;
 
 fn main()  {
-  let ctx = &mut ParseContext::new("(do (var test 10) (set test 15))");
+  let ctx = &mut ParseContext::new("(if (+ 55 66) (- 10 10))");
   let parsed = SExp::parse(ctx).unwrap();
 
   let mut top_level_func = ir::Func::new();

@@ -14,6 +14,7 @@ enum IrErrors {
   BadVariableInitType,
   BadVariableSetType,
   VariableNotFound,
+  ExpectedBooleanCondition,
 }
 
 impl std::fmt::Display for IrErrors {
@@ -26,6 +27,7 @@ impl std::fmt::Display for IrErrors {
       Self::BadVariableInitType => write!(f, "Bad variable init type"),
       Self::VariableNotFound => write!(f, "Variable not found"),
       Self::BadVariableSetType => write!(f, "Bad variable set type"),
+      Self::ExpectedBooleanCondition => write!(f, "Expected boolean condition"),
     }
   }
 }
@@ -104,6 +106,8 @@ pub enum Instruction {
   Label(i64),
   Binop(Binop, i64, i64, i64, bool),
   Mov(i64, i64),
+  Jmpf(i64, i64),
+  Jmp(i64),
 }
 
 impl std::fmt::Display for Instruction {
@@ -119,6 +123,8 @@ impl std::fmt::Display for Instruction {
         }
       }
       Self::Mov(a, b) => write!(f, "mov {} {}", a, b),
+      Self::Jmp(l) => write!(f, "jmp L{}", l),
+      Self::Jmpf(a, b) => write!(f, "jmpf {} L{}", a, b)
     }
   }
 }
@@ -268,6 +274,13 @@ impl<'a> Func<'a> {
         check_len!(list, 3)?;
         self.comp_setvar(sexpr)
       }
+      "if" => {
+        if list.len() == 3 || list.len() == 4 {
+          self.comp_cond(sexpr)
+        } else {
+          Err(anyhow!(IrErrors::UnknownExpression))
+        }
+      }
       _ => Err(anyhow!(IrErrors::UnknownExpression)),
     }
   }
@@ -340,6 +353,45 @@ impl<'a> Func<'a> {
         Ok((vec![Type::Int, Type::Byte, Type::BytePtr], dst))
       }
       SExp::Str(_) => todo!(),
+    }
+  }
+
+  fn comp_cond(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
+    let list = sexpr.as_list()?;
+    let label_true = self.new_label();
+    let label_false = self.new_label();
+
+    self.enter_scope();
+    let (tp, var) = self.comp_expr(&list[1], true)?;
+    if tp == vec![Type::Void] {
+      return Err(anyhow!(IrErrors::ExpectedBooleanCondition))
+    }
+    self.instructions.push(Instruction::Jmpf(var, label_false));
+
+    let (t1, a1) = self.comp_expr(&list[2], false)?;
+    if a1 >= 0 {
+      self.mov(a1, self.stack);
+    }
+
+    let has_else = list.len() == 4;
+    let (mut t2, mut a2) = (vec![Type::Void], -1);
+    if has_else {
+      self.instructions.push(Instruction::Jmp(label_true));
+    }
+    self.set_label(label_true);
+    if has_else {
+      (t2, a2) = self.comp_expr(&list[3], false)?;
+      if a2 >= 0 {
+        self.mov(a2, self.stack);
+      }
+    }
+    self.set_label(label_true);
+    self.leave_scope();
+
+    if a1 < 0 || a2 < 0 || t1 != t2 {
+      Ok((vec![Type::Void], -1))
+    } else {
+      Ok((t1, self.tmp()))
     }
   }
 
