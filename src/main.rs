@@ -1,5 +1,7 @@
 mod ir;
 mod sexpr;
+mod codegen;
+
 use sexpr::*;
 use std::rc::Rc;
 use std::cell::RefCell;
