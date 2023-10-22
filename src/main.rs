@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 fn main()  {
-  let ctx = &mut ParseContext::new("(if (+ 151 215) (+ 120 123))");
+  let ctx = &mut ParseContext::new("(do (var a 10) (loop (gt a 0) (set a (- a 1))))");
   let parsed = SExp::parse(ctx).unwrap();
 
   let top_level_func = Rc::new(RefCell::new(ir::Func::new(None)));

@@ -174,6 +174,39 @@ struct Scope<'a> {
   loop_end: i64,
 }
 
+impl<'a> Scope<'a> {
+  fn new(prev: Option<Rc<RefCell<Scope<'a>>>>) -> Self {
+    let mut scope = Self {
+      prev,
+      nlocals: 0,
+      names: HashMap::new(),
+      save: 0,
+      loop_end: -1,
+      loop_start: -1,
+    };
+
+    if let Some(ref p) = scope.prev {
+      scope.loop_start = p.borrow().loop_start;
+      scope.loop_start = p.borrow().loop_end;
+    }
+
+    scope
+  }
+
+  fn get_var(&self, name: &str) -> Result<TypeIndex> {
+    match self.names.get(name) {
+      Some(val) => Ok(val.to_owned()),
+      None => {
+        if let Some(prev_scope) = &self.prev {
+          prev_scope.borrow().get_var(name)
+        } else {
+          Err(anyhow!(IrErrors::VariableNotFound))
+        }
+      }
+    }
+  }
+}
+
 pub struct Func<'a> {
   scope: Rc<RefCell<Scope<'a>>>,
   nvar: i64,
@@ -182,8 +215,109 @@ pub struct Func<'a> {
   prev: Option<Rc<RefCell<Func<'a>>>>,
   level: i64,
   return_type: Option<Types>,
-  funcs: Vec<Rc<RefCell<Func<'a>>>>,
+  funcs: Vec<usize>, // the id's in the IrContext
   pub instructions: Vec<Instruction>,
+}
+
+impl<'a> Func<'a> {
+  pub fn new(prev_fn: Option<Rc<RefCell<Func<'a>>>>) -> Self {
+    let mut func = Self {
+      scope: Rc::new(RefCell::new(Scope::new(None))),
+      instructions: Vec::new(),
+      stack: 0,
+      nvar: 0,
+      level: 0,
+      return_type: None,
+      prev: prev_fn,
+      funcs: Vec::new(),
+      labels: Vec::new(),
+    };
+
+    if let Some(ref p) = func.prev {
+      func.level = p.borrow().level + 1;
+      func.funcs = p.borrow().funcs.clone()
+    }
+
+    func
+  }
+
+  fn tmp(&mut self) -> i64 {
+    let dst = self.stack;
+    self.stack += 1;
+    dst
+  }
+
+  // returns the address where the variable resides.
+  fn add_var(&mut self, name: &'a str, ty: Types) -> Result<i64> {
+    if self.scope.borrow().names.contains_key(name) {
+      Err(anyhow!(IrErrors::DuplicateName))
+    } else {
+      let mut scope_mut = self.scope.borrow_mut();
+      scope_mut.names.insert(name, (ty, self.nvar));
+      scope_mut.nlocals += 1;
+      assert!((self.stack == self.nvar), "stack is not equal to nvar");
+      let dst = self.stack;
+      self.stack += 1;
+      self.nvar += 1;
+      Ok(dst)
+    }
+  }
+
+  fn new_label(&mut self) -> i64 {
+    let label = self.labels.len() as i64;
+    self.labels.push(None);
+    label
+  }
+
+  fn set_label(&mut self, label: i64) {
+    assert!(
+      (label < self.labels.len() as i64),
+      "label index too big for labels array"
+    );
+    self.labels[label as usize] = Some(self.instructions.len() as i64);
+  }
+
+  fn enter_scope(&mut self) {
+    self.scope = Rc::new(RefCell::new(Scope::new(Some(self.scope.clone()))));
+    self.scope.borrow_mut().save = self.stack;
+  }
+
+  fn leave_scope(&mut self) {
+    self.stack = self.scope.borrow().save;
+    self.nvar -= self.scope.borrow().nlocals;
+    let prev_scope = { self.scope.borrow().prev.clone() };
+    if let Some(prev_scope) = prev_scope {
+      self.scope = prev_scope;
+    }
+  }
+
+  fn mov(&mut self, a: i64, b: i64) -> i64 {
+    if a != b {
+      self.instructions.push(Instruction::Mov(a, b))
+    }
+    b
+  }
+
+  fn get_var(&self, name: &'a str) -> Result<TypeIndex> {
+    self.scope.borrow().get_var(name)
+  }
+
+  // fn scan_func(&mut self, sexpr: &SExp<'a>) -> Result<Rc<RefCell<Self>>> {
+  // let list = sexpr.as_list()?;
+  // let fn_info = list[1].as_list()?;
+  // let fn_name = fn_info[0].as_str()?;
+  // let ty = f_info[0].as_str()?.parse::<Type>()?;
+
+  // self
+  //   .scope
+  //   .borrow_mut()
+  //   .names
+  //   .insert(fn_name, (vec![ty], self.funcs.len() as i64));
+  // let new_func = Rc::new(RefCell::new(Func::new(Some(Rc::new(RefCell::new(self))))));
+  //
+  // Ok(new_func)
+  // todo!()
+  //}
 }
 
 pub struct IrContext<'a> {
@@ -336,13 +470,16 @@ impl<'a> IrContext<'a> {
     };
 
     {
-      let fn_borrow = self.curr.borrow_mut();
-      let mut scope_borrow = fn_borrow.scope.borrow_mut();
+      let fn_ref = self.curr.borrow();
+      let mut scope_borrow = fn_ref.scope.borrow_mut();
       scope_borrow.loop_start = loop_start;
       scope_borrow.loop_end = loop_end;
+    }
 
-      self.curr.borrow_mut().enter_scope();
-      self.curr.borrow_mut().set_label(loop_start);
+    {
+      let mut fn_borrow = self.curr.borrow_mut();
+      fn_borrow.enter_scope();
+      fn_borrow.set_label(loop_start);
     }
 
     let (_, var) = self.comp_expr(&list[1], true)?;
@@ -350,17 +487,13 @@ impl<'a> IrContext<'a> {
       return Err(anyhow!(IrErrors::BadConditionType));
     }
     {
-      self.emit(Instruction::Jmpf(
-        var,
-        self.curr.borrow().scope.borrow().loop_end,
-      ));
+      self.emit(Instruction::Jmpf(var, loop_end));
     }
+
     let _ = self.comp_expr(&list[2], false)?;
 
     {
-      self.emit(Instruction::Jmp(
-        self.curr.borrow().scope.borrow().loop_start,
-      ));
+      self.emit(Instruction::Jmp(loop_start));
     }
 
     let mut fn_mut = self.curr.borrow_mut();
@@ -409,12 +542,15 @@ impl<'a> IrContext<'a> {
   fn comp_setvar(&self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
     let list = sexpr.as_list()?;
 
-    let mut fn_mut = self.curr.borrow_mut();
-    let (dst_type, dst) = fn_mut.get_var(list[1].as_str()?)?;
+    let (dst_type, dst) = {
+      let fn_mut = self.curr.borrow_mut();
+      fn_mut.get_var(list[1].as_str()?)?
+    };
     let (tp, var) = self.comp_expr(&list[2], false)?;
     if dst_type != tp {
       Err(anyhow!(IrErrors::BadVariableSetType))
     } else {
+      let mut fn_mut = self.curr.borrow_mut();
       Ok((dst_type, fn_mut.mov(var, dst)))
     }
   }
@@ -505,371 +641,5 @@ impl<'a> IrContext<'a> {
       self.emit(Instruction::Binop(operation, lhs.1, rhs.1, dst, byte_exp));
       Ok((lhs.0, dst))
     }
-  }
-}
-
-impl<'a> Scope<'a> {
-  fn new(prev: Option<Rc<RefCell<Scope<'a>>>>) -> Self {
-    let mut scope = Self {
-      prev,
-      nlocals: 0,
-      names: HashMap::new(),
-      save: 0,
-      loop_end: -1,
-      loop_start: -1,
-    };
-
-    if let Some(ref p) = scope.prev {
-      scope.loop_start = p.borrow().loop_start;
-      scope.loop_start = p.borrow().loop_end;
-    }
-
-    scope
-  }
-
-  fn get_var(&self, name: &str) -> Result<TypeIndex> {
-    match self.names.get(name) {
-      Some(val) => Ok(val.to_owned()),
-      None => {
-        if let Some(prev_scope) = &self.prev {
-          prev_scope.borrow().get_var(name)
-        } else {
-          Err(anyhow!(IrErrors::VariableNotFound))
-        }
-      }
-    }
-  }
-}
-
-impl<'a> Func<'a> {
-  pub fn new(prev_fn: Option<Rc<RefCell<Func<'a>>>>) -> Self {
-    let mut func = Self {
-      scope: Rc::new(RefCell::new(Scope::new(None))),
-      instructions: Vec::new(),
-      stack: 0,
-      nvar: 0,
-      level: 0,
-      return_type: None,
-      prev: prev_fn,
-      funcs: Vec::new(),
-      labels: Vec::new(),
-    };
-
-    if let Some(ref p) = func.prev {
-      func.level = p.borrow().level + 1;
-      func.funcs = p.borrow().funcs.clone()
-    }
-
-    func
-  }
-
-  fn tmp(&mut self) -> i64 {
-    let dst = self.stack;
-    self.stack += 1;
-    dst
-  }
-
-  // returns the address where the variable resides.
-  fn add_var(&mut self, name: &'a str, ty: Types) -> Result<i64> {
-    if self.scope.borrow().names.contains_key(name) {
-      Err(anyhow!(IrErrors::DuplicateName))
-    } else {
-      self.scope.borrow_mut().names.insert(name, (ty, self.nvar));
-      self.scope.borrow_mut().nlocals += 1;
-      assert!((self.stack == self.nvar), "stack is not equal to nvar");
-      let dst = self.stack;
-      self.stack += 1;
-      self.nvar += 1;
-      Ok(dst)
-    }
-  }
-
-  fn new_label(&mut self) -> i64 {
-    let label = self.labels.len() as i64;
-    self.labels.push(None);
-    label
-  }
-
-  fn set_label(&mut self, label: i64) {
-    assert!(
-      (label < self.labels.len() as i64),
-      "label index too big for labels array"
-    );
-    self.labels[label as usize] = Some(self.instructions.len() as i64);
-  }
-
-  pub fn comp_expr(&mut self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
-    if allow_var {
-      assert!((self.stack == self.nvar), "stack != nvar when allow_var");
-    }
-
-    let save = self.stack;
-    let type_index = self.comp_expr_tmp(sexpr, allow_var)?;
-    let var = type_index.1;
-    assert!((var < self.stack), "returned addr outside of stack.");
-
-    // Discard temporaries from the compilation above. Either the stack is local variables only
-    // or we revert it back to it's original state.
-    self.stack = if allow_var { self.nvar } else { save };
-
-    // The result is either a temporary stored at the top of the stack or a local variable.
-    assert!((var <= self.stack), "returned addr outside of stack.");
-    Ok(type_index)
-  }
-
-  fn comp_list(&mut self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
-    let list = sexpr.as_list()?;
-    let arg = list[0].as_str()?;
-
-    if list.len() == 3 {
-      if let Ok(binary_op) = arg.parse::<Binop>() {
-        return self.comp_binop(sexpr, binary_op);
-      }
-    }
-
-    if list.len() == 2 {
-      if let Ok(_unary_op) = arg.parse::<Unop>() {
-        // TODO: unop
-      }
-    }
-
-    match arg {
-      "do" | "then" | "else" => self.comp_scope(sexpr),
-      "var" => {
-        check_len!(list, 3)?;
-        if !allow_var {
-          Err(anyhow!(IrErrors::ForbiddenVariableDeclaration))
-        } else {
-          self.comp_newvar(sexpr)
-        }
-      }
-      "set" => {
-        check_len!(list, 3)?;
-        self.comp_setvar(sexpr)
-      }
-      "if" => {
-        if list.len() == 3 || list.len() == 4 {
-          self.comp_cond(sexpr)
-        } else {
-          Err(anyhow!(IrErrors::UnknownExpression))
-        }
-      }
-      "break" => {
-        check_len!(list, 1)?;
-        if self.scope.borrow().loop_end < 0 {
-          Err(anyhow!(IrErrors::BreakOutsideLoop))
-        } else {
-          self
-            .instructions
-            .push(Instruction::Jmp(self.scope.borrow().loop_end));
-          Ok((vec![Type::Void], -1))
-        }
-      }
-      "continue" => {
-        check_len!(list, 1)?;
-        if self.scope.borrow().loop_start < 0 {
-          Err(anyhow!(IrErrors::ContinueOutsideLoop))
-        } else {
-          self
-            .instructions
-            .push(Instruction::Jmp(self.scope.borrow().loop_start));
-          Ok((vec![Type::Void], -1))
-        }
-      }
-      "loop" => {
-        check_len!(list, 3)?;
-        self.comp_loop(sexpr)
-      }
-      _ => Err(anyhow!(IrErrors::UnknownExpression)),
-    }
-  }
-
-  fn enter_scope(&mut self) {
-    self.scope = Rc::new(RefCell::new(Scope::new(Some(self.scope.clone()))));
-    self.scope.borrow_mut().save = self.stack;
-  }
-
-  fn leave_scope(&mut self) {
-    self.stack = self.scope.borrow().save;
-    self.nvar -= self.scope.borrow().nlocals;
-    let prev_scope = { self.scope.borrow().prev.clone() };
-    if let Some(prev_scope) = prev_scope {
-      self.scope = prev_scope;
-    }
-  }
-
-  fn comp_loop(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
-    let list = sexpr.as_list()?;
-    self.scope.borrow_mut().loop_start = self.new_label();
-    self.scope.borrow_mut().loop_end = self.new_label();
-    let loop_start = self.scope.borrow().loop_start;
-    let loop_end = self.scope.borrow().loop_end;
-
-    self.enter_scope();
-    self.set_label(loop_start);
-
-    let (_, var) = self.comp_expr(&list[1], true)?;
-    if var < 0 {
-      return Err(anyhow!(IrErrors::BadConditionType));
-    }
-    self
-      .instructions
-      .push(Instruction::Jmpf(var, self.scope.borrow().loop_end));
-    let _ = self.comp_expr(&list[2], false)?;
-
-    self
-      .instructions
-      .push(Instruction::Jmp(self.scope.borrow().loop_start));
-    self.set_label(loop_end);
-    self.leave_scope();
-
-    Ok((vec![Type::Void], -1))
-  }
-
-  fn comp_scope(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
-    let list = sexpr.as_list()?;
-
-    self.enter_scope();
-    let (mut tp, mut var) = (vec![Type::Void], -1 as i64);
-    for child in &list[1..] {
-      (tp, var) = self.comp_expr(child, true)?;
-    }
-    self.leave_scope();
-
-    // The return is either a local variable or a new temporary
-    if var >= self.stack {
-      let t = self.tmp();
-      var = self.mov(var, t);
-    }
-
-    Ok((tp, var))
-  }
-
-  fn comp_newvar(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
-    let list = sexpr.as_list()?;
-
-    let ti = self.comp_expr(&list[2], false)?;
-    if ti.1 < 0 {
-      Err(anyhow!(IrErrors::BadVariableInitType))
-    } else {
-      let dst = self.add_var(list[1].as_str()?, ti.0.clone())?;
-      Ok((ti.0, self.mov(ti.1, dst)))
-    }
-  }
-
-  fn comp_setvar(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
-    let list = sexpr.as_list()?;
-
-    let (dst_type, dst) = self.get_var(list[1].as_str()?)?;
-    let (tp, var) = self.comp_expr(&list[2], false)?;
-    if dst_type != tp {
-      Err(anyhow!(IrErrors::BadVariableSetType))
-    } else {
-      Ok((dst_type, self.mov(var, dst)))
-    }
-  }
-
-  fn comp_expr_tmp(&mut self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
-    match sexpr {
-      SExp::List(_) => self.comp_list(sexpr, allow_var),
-      SExp::F64(num) => {
-        let dst = self.tmp();
-        self
-          .instructions
-          .push(Instruction::Constant(*num as i64, dst));
-        Ok((vec![Type::Int, Type::Byte, Type::BytePtr], dst))
-      }
-      SExp::Str(s) => self.get_var(s),
-    }
-  }
-
-  fn comp_cond(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
-    let list = sexpr.as_list()?;
-    let label_true = self.new_label();
-    let label_false = self.new_label();
-
-    self.enter_scope();
-    let (tp, var) = self.comp_expr(&list[1], true)?;
-    if tp == vec![Type::Void] {
-      return Err(anyhow!(IrErrors::ExpectedBooleanCondition));
-    }
-    self.instructions.push(Instruction::Jmpf(var, label_false));
-
-    let (t1, a1) = self.comp_expr(&list[2], false)?;
-    if a1 >= 0 {
-      self.mov(a1, self.stack);
-    }
-
-    let has_else = list.len() == 4;
-    let (mut t2, mut a2) = (vec![Type::Void], -1);
-    if has_else {
-      self.instructions.push(Instruction::Jmp(label_true));
-    }
-    self.set_label(label_true);
-    if has_else {
-      (t2, a2) = self.comp_expr(&list[3], false)?;
-      if a2 >= 0 {
-        self.mov(a2, self.stack);
-      }
-    }
-    self.set_label(label_true);
-    self.leave_scope();
-
-    if a1 < 0 || a2 < 0 || t1 != t2 {
-      Ok((vec![Type::Void], -1))
-    } else {
-      Ok((t1, self.tmp()))
-    }
-  }
-
-  fn comp_binop(&mut self, sexpr: &SExp<'a>, operation: Binop) -> Result<TypeIndex> {
-    // As with most compilation functions this is already ensured to work.
-    let list = sexpr.as_list()?;
-    let save = self.stack;
-    // TODO: convert binop from string and handle boolean comparisons.
-
-    // First element is the argument so that 1 and 2 are lhs and rhs.
-    let lhs = self.comp_expr_tmp(&list[1], false)?;
-    let rhs = self.comp_expr_tmp(&list[2], false)?;
-
-    self.stack = save;
-    if !(lhs.0 == rhs.0 && (lhs.0[0] == Type::Int || lhs.0[0] == Type::Byte)) {
-      Err(anyhow!(IrErrors::BadBinopTypes))
-    } else {
-      let dst = self.tmp();
-      let byte_exp = lhs.0 == rhs.0 && lhs.0 == vec![Type::Byte];
-      self
-        .instructions
-        .push(Instruction::Binop(operation, lhs.1, rhs.1, dst, byte_exp));
-      Ok((lhs.0, dst))
-    }
-  }
-
-  fn mov(&mut self, a: i64, b: i64) -> i64 {
-    if a != b {
-      self.instructions.push(Instruction::Mov(a, b))
-    }
-    b
-  }
-
-  fn get_var(&self, name: &'a str) -> Result<TypeIndex> {
-    self.scope.borrow().get_var(name)
-  }
-
-  fn scan_func(&mut self, sexpr: &SExp<'a>) -> Result<Rc<RefCell<Self>>> {
-    // let list = sexpr.as_list()?;
-    // let fn_info = list[1].as_list()?;
-    // let fn_name = fn_info[0].as_str()?;
-    // let ty = f_info[0].as_str()?.parse::<Type>()?;
-
-    // self
-    //   .scope
-    //   .borrow_mut()
-    //   .names
-    //   .insert(fn_name, (vec![ty], self.funcs.len() as i64));
-    // let new_func = Rc::new(RefCell::new(Func::new(Some(Rc::new(RefCell::new(self))))));
-    //
-    // Ok(new_func)
-    todo!()
   }
 }
