@@ -361,7 +361,7 @@ impl<'a> IrContext<'a> {
     }
   }
 
-  pub fn comp_expr(&mut self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
+  pub fn comp_expr(&self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
     let stack = {
       let curr_fn = self.curr.borrow();
       if allow_var {
@@ -394,7 +394,7 @@ impl<'a> IrContext<'a> {
     Ok(type_index)
   }
 
-  fn comp_list(&mut self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
+  fn comp_list(&self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
     let list = sexpr.as_list()?;
     let arg = list[0].as_str()?;
 
@@ -459,7 +459,7 @@ impl<'a> IrContext<'a> {
     }
   }
 
-  fn comp_loop(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
+  fn comp_loop(&self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
     let list = sexpr.as_list()?;
 
     let (loop_start, loop_end) = {
@@ -503,7 +503,7 @@ impl<'a> IrContext<'a> {
     Ok((vec![Type::Void], -1))
   }
 
-  fn comp_scope(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
+  fn comp_scope(&self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
     let list = sexpr.as_list()?;
 
     {
@@ -527,7 +527,7 @@ impl<'a> IrContext<'a> {
     Ok((tp, var))
   }
 
-  fn comp_newvar(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
+  fn comp_newvar(&self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
     let list = sexpr.as_list()?;
     let ti = self.comp_expr(&list[2], false)?;
     if ti.1 < 0 {
@@ -539,7 +539,7 @@ impl<'a> IrContext<'a> {
     }
   }
 
-  fn comp_setvar(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
+  fn comp_setvar(&self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
     let list = sexpr.as_list()?;
 
     let (dst_type, dst) = {
@@ -555,7 +555,7 @@ impl<'a> IrContext<'a> {
     }
   }
 
-  fn comp_expr_tmp(&mut self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
+  fn comp_expr_tmp(&self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
     match sexpr {
       SExp::List(_) => self.comp_list(sexpr, allow_var),
       SExp::F64(num) => {
@@ -567,7 +567,7 @@ impl<'a> IrContext<'a> {
     }
   }
 
-  fn comp_cond(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
+  fn comp_cond(&self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
     let list = sexpr.as_list()?;
     let (label_true, label_false) = {
       let mut fn_mut = self.curr.borrow_mut();
@@ -621,7 +621,7 @@ impl<'a> IrContext<'a> {
     }
   }
 
-  fn comp_binop(&mut self, sexpr: &SExp<'a>, operation: Binop) -> Result<TypeIndex> {
+  fn comp_binop(&self, sexpr: &SExp<'a>, operation: Binop) -> Result<TypeIndex> {
     // As with most compilation functions this is already ensured to work.
     let list = sexpr.as_list()?;
     let save = { self.curr.borrow().stack };
@@ -643,21 +643,10 @@ impl<'a> IrContext<'a> {
     }
   }
 
-  fn scan_func(&mut self, sexpr: &SExp<'a>) -> Result<Rc<RefCell<Func<'a>>>> {
-    let list = sexpr.as_list()?;
-    let fn_info = list[1].as_list()?;
-    let fn_name = fn_info[0].as_str()?;
-    let ty = fn_info[0].as_str()?.parse::<Type>()?;
-
-    {
-      let func = self.curr.borrow();
-      func.scope.borrow_mut().names.insert(fn_name, (vec![ty.clone()], func.funcs.len() as i64));
-    }
-
-    let mut scanned_func = Func::new(Some(self.curr.clone()));
-    scanned_func.return_type = Some(vec![ty]);
-    let scanned_func = Rc::new(RefCell::new(scanned_func));
-
-    Ok(scanned_func)
+   fn scan_func(&mut self, sexpr: &SExp<'a>) -> Result<Rc<RefCell<Self>>> {
+   let list = sexpr.as_list()?;
+   let fn_info = list[1].as_list()?;
+   let fn_name = fn_info[0].as_str()?;
+   let ty = fn_info[0].as_str()?.parse::<Type>()?;
   }
 }

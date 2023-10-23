@@ -1,4 +1,5 @@
 // Codegen handles executing and creating machinecode for a given rc program.
+extern crate libc;
 
 use crate::ir::*;
 use std::collections::HashMap;
@@ -32,6 +33,14 @@ impl<'a> Codegen<'a> {
       fn_to_offset: HashMap::new(),
       ir_context,
     }
+  }
+
+  fn mem_entry(&mut self) {
+    self.buffer.extend_from_slice(&[0x53, 0x84, 0x89, 0xFB]);
+    // TODO: call the main func
+    self.buffer.extend_from_slice(&[0x48, 0x8b, 0x03]); // mov rax, [rbx]
+    self.buffer.push(0x5b); // pop rbx
+    self.buffer.push(0xc3); // ret
   }
 }
 
