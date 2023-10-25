@@ -29,7 +29,9 @@ enum IrErrors {
   BreakOutsideLoop,
   ContinueOutsideLoop,
   BadConditionType,
+  BadBodyType,
   FuncNotFound,
+  MissingReturnType
 }
 
 impl std::fmt::Display for IrErrors {
@@ -47,6 +49,8 @@ impl std::fmt::Display for IrErrors {
       Self::ContinueOutsideLoop => write!(f, "Continue outside loop"),
       Self::BadConditionType => write!(f, "Bad condition type"),
       Self::FuncNotFound => write!(f, "Func not found"),
+      Self::BadBodyType => write!(f, "Body return type doesn't match the function return type."),
+      Self::MissingReturnType => write!(f, "function is missing return function")
     }
   }
 }
@@ -142,6 +146,7 @@ pub enum Instruction {
   Mov(i64, i64),
   Jmpf(i64, i64),
   Jmp(i64),
+  Ret(i64)
 }
 
 impl std::fmt::Display for Instruction {
@@ -158,6 +163,7 @@ impl std::fmt::Display for Instruction {
       Self::Mov(a, b) => write!(f, "mov {} {}", a, b),
       Self::Jmp(l) => write!(f, "jmp L{}", l),
       Self::Jmpf(a, b) => write!(f, "jmpf {} L{}", a, b),
+      Self::Ret(a) => write!(f, "ret {}", a)
     }
   }
 }
@@ -659,5 +665,42 @@ impl<'a> IrContext<'a> {
     let scanned_func = Rc::new(RefCell::new(scanned_func));
 
     Ok(scanned_func)
+  }
+ 
+  // comp_func handles creating the ir for a given function. It doesn't affect the main function of the 
+  // ir context, rather a given paramter function.
+  fn comp_func(&mut self, sexpr: &SExp<'a>, fn_to_compile: Rc<RefCell<Func<'a>>>) -> Result<TypeIndex> {
+    let fn_expr = sexpr.as_list()?;
+    let arguments_list = fn_expr[2].as_list()?;
+
+    {
+      // Function arguments are treated the same as local variables.
+      let mut fn_borrow = fn_to_compile.borrow_mut();
+      for exp in arguments_list.iter().map(|e| e.as_list().unwrap()) {
+        let ty = exp[1].as_str()?.parse::<Type>()?;
+        fn_borrow.add_var(exp[0].as_str()?, vec![ty])?;
+      }
+
+      assert!(fn_borrow.stack as usize == arguments_list.len(), "function stack is not equal to parameter size")
+    }
+
+    // Compile the function body and ensure that the types match.
+    let (body_type, mut addr) = self.comp_expr(&fn_expr[3], false)?;
+    let mut fn_borrow = fn_to_compile.borrow_mut();
+
+    if let Some(ret_type) = fn_borrow.return_type.clone() {
+      if ret_type != vec![Type::Void] && ret_type != body_type {
+        return Err(anyhow!(IrErrors::BadBodyType));
+      }
+
+      if ret_type == vec![Type::Void] {
+        addr = -1;
+      }
+
+      fn_borrow.instructions.push(Instruction::Ret(addr));
+      Ok((vec![Type::Void], -1))
+    } else {
+      Err(anyhow!(IrErrors::MissingReturnType))
+    }
   }
 }
