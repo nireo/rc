@@ -511,10 +511,31 @@ impl<'a> IrContext<'a> {
 
   fn comp_scope(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
     let list = sexpr.as_list()?;
-
     {
       self.curr.borrow_mut().enter_scope();
     }
+
+    let mut groups: Vec<Vec<usize>> = vec![Vec::new()];
+    for (idx, child) in list[1..].iter().enumerate() {
+      let child_list = child.as_list()?;
+      let last_index = groups.len() - 1;
+      groups[last_index - 1].push(idx);
+
+      if child_list[0].as_str()? == "var" {
+        groups.push(Vec::new());
+      }
+    }
+
+    // This is done to efficiently access lists. Without having to continually change convert types.
+    for group in groups {
+      let scanned_functions: Vec<Rc<RefCell<Func<'a>>>> = group.iter().filter(|e| {
+        let l = list[**e + 1].as_list().unwrap();
+        l.len() == 4 && l[0].as_str().unwrap() == "def"
+      }).map(|e| {
+          self.scan_func(&list[*e + 1]).unwrap()
+        }).collect();
+    }
+
     let (mut tp, mut var) = (vec![Type::Void], -1 as i64);
     for child in &list[1..] {
       (tp, var) = self.comp_expr(child, true)?;
@@ -667,15 +688,17 @@ impl<'a> IrContext<'a> {
     Ok(scanned_func)
   }
  
-  // comp_func handles creating the ir for a given function. It doesn't affect the main function of the 
-  // ir context, rather a given paramter function.
+  // comp_func handles creating the ir for a given function. It sets the current function field in the ir context.
   fn comp_func(&mut self, sexpr: &SExp<'a>, fn_to_compile: Rc<RefCell<Func<'a>>>) -> Result<TypeIndex> {
     let fn_expr = sexpr.as_list()?;
     let arguments_list = fn_expr[2].as_list()?;
 
+    // Change the current function. Such that compilation happens inside this function.
+    self.curr = fn_to_compile;
+
     {
       // Function arguments are treated the same as local variables.
-      let mut fn_borrow = fn_to_compile.borrow_mut();
+      let mut fn_borrow = self.curr.borrow_mut();
       for exp in arguments_list.iter().map(|e| e.as_list().unwrap()) {
         let ty = exp[1].as_str()?.parse::<Type>()?;
         fn_borrow.add_var(exp[0].as_str()?, vec![ty])?;
@@ -686,7 +709,7 @@ impl<'a> IrContext<'a> {
 
     // Compile the function body and ensure that the types match.
     let (body_type, mut addr) = self.comp_expr(&fn_expr[3], false)?;
-    let mut fn_borrow = fn_to_compile.borrow_mut();
+    let mut fn_borrow = self.curr.borrow_mut();
 
     if let Some(ret_type) = fn_borrow.return_type.clone() {
       if ret_type != vec![Type::Void] && ret_type != body_type {
