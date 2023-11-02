@@ -3,6 +3,7 @@ use anyhow::anyhow;
 use anyhow::Result;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io::Write;
 use std::rc::Rc;
 
 #[macro_export]
@@ -309,27 +310,10 @@ impl<'a> Func<'a> {
     fn get_var(&self, name: &'a str) -> Result<TypeIndex> {
         self.scope.borrow().get_var(name)
     }
-
-    // fn scan_func(&mut self, sexpr: &SExp<'a>) -> Result<Rc<RefCell<Self>>> {
-    // let list = sexpr.as_list()?;
-    // let fn_info = list[1].as_list()?;
-    // let fn_name = fn_info[0].as_str()?;
-    // let ty = f_info[0].as_str()?.parse::<Type>()?;
-
-    // self
-    //   .scope
-    //   .borrow_mut()
-    //   .names
-    //   .insert(fn_name, (vec![ty], self.funcs.len() as i64));
-    // let new_func = Rc::new(RefCell::new(Func::new(Some(Rc::new(RefCell::new(self))))));
-    //
-    // Ok(new_func)
-    // todo!()
-    //}
 }
 
 pub struct IrContext<'a> {
-    funcs: HashMap<usize, Rc<RefCell<Func<'a>>>>,
+    funcs: Vec<Rc<RefCell<Func<'a>>>>, // functions in a given context.
     pub curr: Rc<RefCell<Func<'a>>>,
     func_index: usize,
 }
@@ -339,7 +323,7 @@ impl<'a> IrContext<'a> {
         let mut ir_context = Self {
             func_index: 0,
             curr: starting_func.clone(),
-            funcs: HashMap::new(),
+            funcs: Vec::new(),
         };
 
         ir_context
@@ -363,9 +347,10 @@ impl<'a> IrContext<'a> {
     }
 
     pub fn get_func(&self, id: usize) -> Result<Rc<RefCell<Func<'a>>>> {
-        match self.funcs.get(&id) {
-            Some(f) => Ok(f.clone()),
-            _ => Err(anyhow!(IrErrors::FuncNotFound)),
+        if id >= self.funcs.len() {
+            Err(anyhow!("id is out of bounds"))
+        } else {
+            Ok(self.funcs[id].clone())
         }
     }
 
@@ -743,5 +728,33 @@ impl<'a> IrContext<'a> {
         } else {
             Err(anyhow!(IrErrors::MissingReturnType))
         }
+    }
+
+    // dump_instructions dumps a display of the ir instructions into a given writer.
+    pub fn dump_instructions<W: Write>(&self, mut writer: W) -> Result<()> {
+        // loop over every function skipping the starting function.
+        for (idx, func) in self.funcs[1..].iter().enumerate() {
+            let fn_borrow = func.borrow();
+            write!(writer, "func{}", idx)?;
+            let mut positions_to_labels: HashMap<usize, Vec<i64>> = HashMap::new();
+            for (pos, label) in fn_borrow.labels.iter().enumerate() {
+                positions_to_labels
+                    .entry(pos)
+                    .or_insert_with(|| Vec::new())
+                    .push(label.unwrap());
+            }
+
+            for (pos, instr) in fn_borrow.instructions.iter().enumerate() {
+                if let Some(labels) = positions_to_labels.get(&pos) {
+                    for l in labels {
+                        write!(writer, "L{}:", *l)?;
+                    }
+                }
+
+                write!(writer, "    {}", instr)?;
+            }
+            write!(writer, "\n")?;
+        }
+        Ok(())
     }
 }
