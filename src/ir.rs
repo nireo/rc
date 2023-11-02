@@ -16,6 +16,7 @@ macro_rules! check_len {
         }
     };
 }
+
 #[derive(Debug)]
 enum IrErrors {
     DuplicateName,
@@ -306,7 +307,6 @@ impl<'a> Func<'a> {
     }
 
     fn get_var(&self, name: &'a str) -> Result<TypeIndex> {
-        panic!("HAHHAHA");
         self.scope.borrow().get_var(name)
     }
 }
@@ -334,14 +334,6 @@ impl<'a> IrContext<'a> {
     // emit to current function
     pub fn emit(&self, instruction: Instruction) {
         self.curr.borrow_mut().instructions.push(instruction);
-    }
-
-    pub fn get_func(&self, id: usize) -> Result<Rc<RefCell<Func<'a>>>> {
-        if id >= self.funcs.len() {
-            Err(anyhow!("id is out of bounds"))
-        } else {
-            Ok(self.funcs[id].clone())
-        }
     }
 
     pub fn comp_expr(&mut self, sexpr: &SExp<'a>, allow_var: bool) -> Result<TypeIndex> {
@@ -490,7 +482,6 @@ impl<'a> IrContext<'a> {
 
         let mut groups: Vec<Vec<usize>> = vec![Vec::new()];
         for (idx, child) in list[1..].iter().enumerate() {
-            println!("{}", idx);
             let child_list = child.as_list()?;
             let last_index = groups.len() - 1;
             groups[last_index].push(idx + 1);
@@ -611,7 +602,7 @@ impl<'a> IrContext<'a> {
             self.emit(Instruction::Jmp(label_true));
         }
         {
-            self.curr.borrow_mut().set_label(label_true);
+            self.curr.borrow_mut().set_label(label_false);
         }
         if has_else {
             (t2, a2) = self.comp_expr(&list[3], false)?;
@@ -696,14 +687,11 @@ impl<'a> IrContext<'a> {
         }
 
         // Compile the function body and ensure that the types match.
-        println!("compiling function body: {:?}", &fn_expr[3]);
         let (body_type, mut addr) = self.comp_expr(&fn_expr[3], false)?;
         let mut fn_borrow = self.curr.borrow_mut();
 
         if let Some(ret_type) = fn_borrow.return_type.clone() {
             if ret_type != vec![Type::Void] && !body_type.contains(&ret_type[0]) {
-                println!("return_type {:?}", ret_type);
-                println!("body {:?}", body_type);
                 return Err(anyhow!(IrErrors::BadBodyType));
             }
 
@@ -748,10 +736,10 @@ impl<'a> IrContext<'a> {
 
     pub fn gen_ir<W: Write>(writer: W, input: &str) -> Result<()> {
         let input_str = format!("(def (main int) () (do {}))", input);
-        println!("compiling: {}", input_str);
         let parse_ctx = &mut ParseContext::new(input_str.as_str());
         let parsed_expressions = SExp::parse(parse_ctx).unwrap();
-        println!("{:?}", &parsed_expressions);
+
+        println!("{:?}", parsed_expressions);
 
         let top_level_func = Rc::new(RefCell::new(Func::new(None)));
         let mut ir_context = IrContext::new(top_level_func);

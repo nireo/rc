@@ -90,14 +90,20 @@ impl<'a> SExp<'a> {
     pub fn as_str(&self) -> Result<&'a str> {
         match self {
             Self::Str(s) => Ok(s),
-            _ => Err(anyhow::anyhow!("sexpr is not string")),
+            _ => {
+                panic!("not string");
+                // Err(anyhow::anyhow!("sexpr is not string"))
+            }
         }
     }
 
     pub fn as_list(&self) -> Result<&'a [SExp<'a>]> {
         match self {
             Self::List(l) => Ok(l),
-            _ => Err(anyhow::anyhow!("sexpr is not of type list")),
+            _ => {
+                panic!("not list");
+                // Err(anyhow::anyhow!("sexpr is not of type list"))
+            }
         }
     }
 

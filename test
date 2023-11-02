@@ -1,0 +1,1 @@
+List([Str("def"), List([Str("main"), Str("int")]), List([]), List([Str("do"), List([Str("if"), F64(1.0), List([Str("return"), F64(2.0)])]), F64(0.0)])])
