@@ -30,7 +30,6 @@ enum IrErrors {
     ContinueOutsideLoop,
     BadConditionType,
     BadBodyType,
-    FuncNotFound,
     MissingReturnType,
 }
 
@@ -48,7 +47,6 @@ impl std::fmt::Display for IrErrors {
             Self::BreakOutsideLoop => write!(f, "Break outside loop"),
             Self::ContinueOutsideLoop => write!(f, "Continue outside loop"),
             Self::BadConditionType => write!(f, "Bad condition type"),
-            Self::FuncNotFound => write!(f, "Func not found"),
             Self::BadBodyType => write!(
                 f,
                 "Body return type doesn't match the function return type."
@@ -492,9 +490,10 @@ impl<'a> IrContext<'a> {
 
         let mut groups: Vec<Vec<usize>> = vec![Vec::new()];
         for (idx, child) in list[1..].iter().enumerate() {
+            println!("{}", idx);
             let child_list = child.as_list()?;
             let last_index = groups.len() - 1;
-            groups[last_index].push(idx);
+            groups[last_index].push(idx + 1);
 
             if child_list[0].as_str()? == "var" {
                 groups.push(Vec::new());
@@ -509,8 +508,8 @@ impl<'a> IrContext<'a> {
             // preprocess all functions
             let scanned_functions: Vec<(Rc<RefCell<Func<'a>>>, usize)> = group
                 .iter()
-                .filter_map(|e| match list[*e + 1].is_func_def() {
-                    Ok(true) => Some((self.scan_func(&list[*e + 1]).unwrap(), *e)),
+                .filter_map(|e| match list[*e].is_func_def() {
+                    Ok(true) => Some((self.scan_func(&list[*e]).unwrap(), *e)),
                     _ => None,
                 })
                 .collect();
@@ -702,7 +701,9 @@ impl<'a> IrContext<'a> {
         let mut fn_borrow = self.curr.borrow_mut();
 
         if let Some(ret_type) = fn_borrow.return_type.clone() {
-            if ret_type != vec![Type::Void] && ret_type != body_type {
+            if ret_type != vec![Type::Void] && !body_type.contains(&ret_type[0]) {
+                println!("return_type {:?}", ret_type);
+                println!("body {:?}", body_type);
                 return Err(anyhow!(IrErrors::BadBodyType));
             }
 
@@ -722,7 +723,7 @@ impl<'a> IrContext<'a> {
         // loop over every function skipping the starting function.
         for (idx, func) in self.funcs[1..].iter().enumerate() {
             let fn_borrow = func.borrow();
-            write!(writer, "func{}", idx)?;
+            writeln!(writer, "func{}:", idx)?;
             let mut positions_to_labels: HashMap<usize, Vec<i64>> = HashMap::new();
             for (pos, label) in fn_borrow.labels.iter().enumerate() {
                 positions_to_labels
@@ -734,18 +735,18 @@ impl<'a> IrContext<'a> {
             for (pos, instr) in fn_borrow.instructions.iter().enumerate() {
                 if let Some(labels) = positions_to_labels.get(&pos) {
                     for l in labels {
-                        write!(writer, "L{}:", *l)?;
+                        writeln!(writer, "L{}:", *l)?;
                     }
                 }
 
-                write!(writer, "    {}", instr)?;
+                writeln!(writer, "    {}", instr)?;
             }
             write!(writer, "\n")?;
         }
         Ok(())
     }
 
-    pub fn gen_ir<W: Write>(mut writer: W, input: &str) -> Result<()> {
+    pub fn gen_ir<W: Write>(writer: W, input: &str) -> Result<()> {
         let input_str = format!("(def (main int) () (do {}))", input);
         println!("compiling: {}", input_str);
         let parse_ctx = &mut ParseContext::new(input_str.as_str());
