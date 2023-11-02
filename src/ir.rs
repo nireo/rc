@@ -74,7 +74,7 @@ impl std::str::FromStr for Type {
             "void" => Ok(Self::Void),
             "byte" => Ok(Self::Byte),
             "int" => Ok(Self::Int),
-            _ => Err(anyhow!("unsupported binary operation")),
+            _ => Err(anyhow!("unrecognized type name")),
         }
     }
 }
@@ -308,6 +308,7 @@ impl<'a> Func<'a> {
     }
 
     fn get_var(&self, name: &'a str) -> Result<TypeIndex> {
+        panic!("HAHHAHA");
         self.scope.borrow().get_var(name)
     }
 }
@@ -315,30 +316,21 @@ impl<'a> Func<'a> {
 pub struct IrContext<'a> {
     funcs: Vec<Rc<RefCell<Func<'a>>>>, // functions in a given context.
     pub curr: Rc<RefCell<Func<'a>>>,
-    func_index: usize,
 }
 
 impl<'a> IrContext<'a> {
     pub fn new(starting_func: Rc<RefCell<Func<'a>>>) -> Self {
         let mut ir_context = Self {
-            func_index: 0,
             curr: starting_func.clone(),
             funcs: Vec::new(),
         };
 
-        ir_context
-            .funcs
-            .insert(ir_context.func_index, starting_func);
-        ir_context.func_index += 1;
+        ir_context.funcs.push(starting_func);
         ir_context
     }
 
-    pub fn new_func(&mut self, fn_data: Rc<RefCell<Func<'a>>>) -> usize {
-        let idx = self.func_index;
-        self.funcs.insert(idx, fn_data);
-        self.func_index += 1;
-
-        idx
+    pub fn new_func(&mut self, fn_data: Rc<RefCell<Func<'a>>>) {
+        self.funcs.push(fn_data);
     }
 
     // emit to current function
@@ -394,12 +386,6 @@ impl<'a> IrContext<'a> {
         if list.len() == 3 {
             if let Ok(binary_op) = arg.parse::<Binop>() {
                 return self.comp_binop(sexpr, binary_op);
-            }
-        }
-
-        if list.len() == 2 {
-            if let Ok(_unary_op) = arg.parse::<Unop>() {
-                // TODO: unop
             }
         }
 
@@ -508,7 +494,7 @@ impl<'a> IrContext<'a> {
         for (idx, child) in list[1..].iter().enumerate() {
             let child_list = child.as_list()?;
             let last_index = groups.len() - 1;
-            groups[last_index - 1].push(idx);
+            groups[last_index].push(idx);
 
             if child_list[0].as_str()? == "var" {
                 groups.push(Vec::new());
@@ -675,8 +661,7 @@ impl<'a> IrContext<'a> {
         let list = sexpr.as_list()?;
         let fn_info = list[1].as_list()?;
         let fn_name = fn_info[0].as_str()?;
-        let ty = fn_info[0].as_str()?.parse::<Type>()?;
-
+        let ty = fn_info[1].as_str()?.parse::<Type>()?;
         {
             let func = self.curr.borrow();
             func.scope
@@ -688,6 +673,7 @@ impl<'a> IrContext<'a> {
         let mut scanned_func = Func::new(Some(self.curr.clone()));
         scanned_func.return_type = Some(vec![ty]);
         let scanned_func = Rc::new(RefCell::new(scanned_func));
+        self.new_func(scanned_func.clone());
 
         Ok(scanned_func)
     }
@@ -711,6 +697,7 @@ impl<'a> IrContext<'a> {
         }
 
         // Compile the function body and ensure that the types match.
+        println!("compiling function body: {:?}", &fn_expr[3]);
         let (body_type, mut addr) = self.comp_expr(&fn_expr[3], false)?;
         let mut fn_borrow = self.curr.borrow_mut();
 
@@ -755,6 +742,24 @@ impl<'a> IrContext<'a> {
             }
             write!(writer, "\n")?;
         }
+        Ok(())
+    }
+
+    pub fn gen_ir<W: Write>(mut writer: W, input: &str) -> Result<()> {
+        let input_str = format!("(def (main int) () (do {}))", input);
+        println!("compiling: {}", input_str);
+        let parse_ctx = &mut ParseContext::new(input_str.as_str());
+        let parsed_expressions = SExp::parse(parse_ctx).unwrap();
+        println!("{:?}", &parsed_expressions);
+
+        let top_level_func = Rc::new(RefCell::new(Func::new(None)));
+        let mut ir_context = IrContext::new(top_level_func);
+
+        let func = ir_context.scan_func(&parsed_expressions)?;
+        ir_context.curr = func;
+        ir_context.comp_func(&parsed_expressions)?;
+        ir_context.dump_instructions(writer)?;
+
         Ok(())
     }
 }
