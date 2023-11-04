@@ -647,7 +647,7 @@ impl<'a> IrContext<'a> {
         }
     }
 
-    fn scan_func(&mut self, sexpr: &SExp<'a>) -> Result<Rc<RefCell<Func<'a>>>> {
+    pub fn scan_func(&mut self, sexpr: &SExp<'a>) -> Result<Rc<RefCell<Func<'a>>>> {
         let list = sexpr.as_list()?;
         let fn_info = list[1].as_list()?;
         let fn_name = fn_info[0].as_str()?;
@@ -669,7 +669,7 @@ impl<'a> IrContext<'a> {
     }
 
     // comp_func handles creating the ir for a given function. It sets the current function field in the ir context.
-    fn comp_func(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
+    pub fn comp_func(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
         let fn_expr = sexpr.as_list()?;
         let arguments_list = fn_expr[2].as_list()?;
         {

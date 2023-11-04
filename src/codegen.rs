@@ -21,7 +21,7 @@ const REG_DI: u8 = 7;
 
 // Codegen creates the encoded instructions but doesn't execute the code.
 pub struct Codegen<'a> {
-    buffer: Vec<u8>, // binary encoded instructions
+    pub buffer: Vec<u8>, // binary encoded instructions
     jumps: HashMap<i64, Vec<usize>>,
     calls: HashMap<i64, Vec<usize>>,
     fn_to_offset: Vec<usize>,
@@ -94,6 +94,8 @@ impl<'a> Codegen<'a> {
             pos_to_offset.push(self.buffer.len());
             // handle codegen for each instruction.
             match inst {
+                Instruction::Constant(val, dst) => self.constant(*val, *dst)?,
+                Instruction::Ret(a) => self.ret(*a)?,
                 Instruction::Binop(op, a1, a2, dst, _) => self.binop(op.clone(), *a1, *a2, *dst)?,
                 Instruction::Mov(src, dst) => self.mov(*src, *dst)?,
                 _ => panic!("instruction not handled"),
@@ -110,6 +112,34 @@ impl<'a> Codegen<'a> {
             }
         }
         self.jumps.clear();
+        Ok(())
+    }
+
+    fn ret(&mut self, a1: i64) -> Result<()> {
+        if a1 > 0 {
+            self.load_rax(a1)?;
+            self.store_rax(0)?;
+        }
+        self.buffer.push(0xc3);
+        Ok(())
+    }
+
+    fn constant(&mut self, val: i64, dst: i64) -> Result<()> {
+        if val == 0 {
+            self.buffer.extend_from_slice(&[0x31, 0xc0]);
+        } else if val == -1 {
+            self.buffer.extend_from_slice(&[0x48, 0x83, 0xc8, 0xff]);
+        } else if (val >> 31) == 0 {
+            self.buffer.push(0xb8);
+            self.buffer.write_i32::<LittleEndian>(val as i32)?;
+        } else if (val >> 31) == -1 {
+            self.buffer.extend_from_slice(&[0x48, 0x83, 0xc7, 0xc0]);
+            self.buffer.write_i32::<LittleEndian>(val as i32)?;
+        } else {
+            self.buffer.extend_from_slice(&[0x48, 0xb8]);
+            self.buffer.write_i64::<LittleEndian>(val)?;
+        }
+        self.store_rax(dst)?;
         Ok(())
     }
 
