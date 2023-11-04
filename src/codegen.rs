@@ -4,9 +4,11 @@ extern crate libc;
 use crate::ir::*;
 use anyhow::Result;
 use byteorder::{LittleEndian, WriteBytesExt};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
+use std::rc::Rc;
 
 const REG_A: u8 = 0;
 const REG_C: u8 = 1;
@@ -22,8 +24,9 @@ pub struct Codegen<'a> {
     buffer: Vec<u8>, // binary encoded instructions
     jumps: HashMap<i64, Vec<usize>>,
     calls: HashMap<i64, Vec<usize>>,
-    fn_to_offset: HashMap<usize, usize>,
+    fn_to_offset: Vec<usize>,
     ir_context: IrContext<'a>,
+    alignment: usize,
 }
 
 impl<'a> Codegen<'a> {
@@ -32,8 +35,9 @@ impl<'a> Codegen<'a> {
             buffer: Vec::new(),
             jumps: HashMap::new(),
             calls: HashMap::new(),
-            fn_to_offset: HashMap::new(),
+            fn_to_offset: Vec::new(),
             ir_context,
+            alignment: 16,
         }
     }
 
@@ -43,6 +47,53 @@ impl<'a> Codegen<'a> {
         self.buffer.extend_from_slice(&[0x48, 0x8b, 0x03]); // mov rax, [rbx]
         self.buffer.push(0x5b); // pop rbx
         self.buffer.push(0xc3); // ret
+        Ok(())
+    }
+
+    fn padding(&mut self) {
+        if self.alignment == 0 {
+            return;
+        } else {
+            self.buffer.push(0xcc);
+            while self.buffer.len() % self.alignment != 0 {
+                self.buffer.push(0xcc);
+            }
+        }
+    }
+
+    pub fn codegen_mem(&mut self) -> Result<()> {
+        self.mem_entry()?;
+        for func in self.ir_context.funcs.iter() {}
+
+        Ok(())
+    }
+
+    fn func(&mut self, func_to_compile: Rc<RefCell<Func<'a>>>) -> Result<()> {
+        self.padding();
+        self.fn_to_offset.push(self.buffer.len()); // function index -> code offset
+
+        let fn_borrow = func_to_compile.borrow();
+
+        // virtual instruction -> code offset
+        let mut pos_to_offset = Vec::new();
+        for inst in &fn_borrow.instructions {
+            pos_to_offset.push(self.buffer.len());
+            // handle codegen for each instruction.
+            match inst {
+                _ => panic!("instruction not handled"),
+            }
+        }
+
+        // fill in jmp address
+        for (label, offset_list) in &self.jumps {
+            let dst_offset = pos_to_offset[fn_borrow.labels[*label as usize].unwrap() as usize];
+            for patch_off in offset_list {
+                let src_offset = patch_off + 4;
+                let rel = ((dst_offset - src_offset) as i32).to_le_bytes();
+                self.buffer[*patch_off..*patch_off + 4].copy_from_slice(&rel);
+            }
+        }
+        self.jumps.clear();
         Ok(())
     }
 

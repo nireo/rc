@@ -219,11 +219,11 @@ pub struct Func<'a> {
     scope: Rc<RefCell<Scope<'a>>>,
     nvar: i64,
     stack: i64,
-    labels: Vec<Option<i64>>,
     prev: Option<Rc<RefCell<Func<'a>>>>,
     level: i64,
     return_type: Option<Types>,
     funcs: Vec<usize>, // the id's in the IrContext
+    pub labels: Vec<Option<i64>>,
     pub instructions: Vec<Instruction>,
 }
 
@@ -312,7 +312,7 @@ impl<'a> Func<'a> {
 }
 
 pub struct IrContext<'a> {
-    funcs: Vec<Rc<RefCell<Func<'a>>>>, // functions in a given context.
+    pub funcs: Vec<Rc<RefCell<Func<'a>>>>, // functions in a given context.
     pub curr: Rc<RefCell<Func<'a>>>,
 }
 
