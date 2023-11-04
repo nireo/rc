@@ -78,7 +78,7 @@ impl std::str::FromStr for Type {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Hash, Eq)]
 pub enum Binop {
     Plus,
     Minus,

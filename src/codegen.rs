@@ -50,6 +50,19 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    fn mem_end(&mut self) {
+        for (label, offset_list) in &self.calls {
+            let dst_offset = self.fn_to_offset[*label as usize];
+            for patch_off in offset_list {
+                let src_offset = patch_off + 4;
+                let rel = ((dst_offset - src_offset) as i32).to_le_bytes();
+                self.buffer[*patch_off..*patch_off + 4].copy_from_slice(&rel);
+            }
+        }
+        self.calls.clear();
+        self.padding();
+    }
+
     fn padding(&mut self) {
         if self.alignment == 0 {
             return;
@@ -63,8 +76,9 @@ impl<'a> Codegen<'a> {
 
     pub fn codegen_mem(&mut self) -> Result<()> {
         self.mem_entry()?;
-        for func in self.ir_context.funcs.iter() {}
-
+        for func in self.ir_context.funcs[1..].to_vec() {
+            self.func(func)?;
+        }
         Ok(())
     }
 
@@ -80,6 +94,8 @@ impl<'a> Codegen<'a> {
             pos_to_offset.push(self.buffer.len());
             // handle codegen for each instruction.
             match inst {
+                Instruction::Binop(op, a1, a2, dst, _) => self.binop(op.clone(), *a1, *a2, *dst)?,
+                Instruction::Mov(src, dst) => self.mov(*src, *dst)?,
                 _ => panic!("instruction not handled"),
             }
         }
@@ -94,6 +110,29 @@ impl<'a> Codegen<'a> {
             }
         }
         self.jumps.clear();
+        Ok(())
+    }
+
+    fn binop(&mut self, op: Binop, a1: i64, a2: i64, dst: i64) -> Result<()> {
+        self.load_rax(a1)?;
+
+        let arith: HashMap<Binop, Vec<u8>> = [
+            (Binop::Plus, vec![0x48, 0x03]),
+            (Binop::Minus, vec![0x48, 0x2b]),
+            (Binop::Multiply, vec![0x48, 0x0f, 0xaf]),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        match op {
+            _ if arith.contains_key(&op) => {
+                self.asm_disp(arith[&op].clone(), REG_A, REG_B, a2 * 8)?
+            }
+            // TODO: rest of the operations
+            _ => (),
+        }
+
         Ok(())
     }
 
