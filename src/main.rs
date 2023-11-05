@@ -28,6 +28,7 @@ fn main() -> anyhow::Result<()> {
     let mut codegen = Codegen::new(ir_context);
     codegen.codegen_mem()?;
 
+    println!("{:?}", codegen.buffer);
     let exec_ctx = ExecContext::new(&codegen.buffer);
     std::process::exit(exec_ctx.invoke() as i32);
 }

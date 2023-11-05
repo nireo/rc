@@ -42,7 +42,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn mem_entry(&mut self) -> Result<()> {
-        self.buffer.extend_from_slice(&[0x53, 0x84, 0x89, 0xFB]);
+        self.buffer.extend_from_slice(&[0x53, 0x48, 0x89, 0xFB]);
         self.asm_call(0)?;
         self.buffer.extend_from_slice(&[0x48, 0x8b, 0x03]); // mov rax, [rbx]
         self.buffer.push(0x5b); // pop rbx
@@ -79,6 +79,7 @@ impl<'a> Codegen<'a> {
         for func in self.ir_context.funcs[1..].to_vec() {
             self.func(func)?;
         }
+        self.mem_end();
         Ok(())
     }
 
