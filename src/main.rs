@@ -8,15 +8,29 @@ use ir::*;
 use sexpr::*;
 
 use crate::codegen::{Codegen, ExecContext};
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    // Should code be generated and executed.
+    #[arg(short, long, default_value_t = false)]
+    gen: bool,
+
+    #[arg(long, default_value_t = false)]
+    dump_ir: bool,
+}
 
 fn main() -> anyhow::Result<()> {
-    let input = "(+ 1 2)";
+    let args = Args::parse();
+
+    let input = "
+(def (fib int) ((n int)) (if (le n 0) (then 0) (else (call fib (- n 1)))))
+(call fib 5)";
 
     let input_str = format!("(def (main int) () (do {}))", input);
     let parse_ctx = &mut ParseContext::new(input_str.as_str());
     let parsed_expressions = SExp::parse(parse_ctx).unwrap();
-
-    println!("{:?}", parsed_expressions);
 
     let top_level_func = Rc::new(RefCell::new(Func::new(None)));
     let mut ir_context = IrContext::new(top_level_func);
@@ -25,10 +39,17 @@ fn main() -> anyhow::Result<()> {
     ir_context.curr = func;
     ir_context.comp_func(&parsed_expressions)?;
 
-    let mut codegen = Codegen::new(ir_context);
-    codegen.codegen_mem()?;
+    if args.dump_ir {
+        ir_context.dump_instructions(std::io::stdout())?;
+    }
 
-    println!("{:?}", codegen.buffer);
-    let exec_ctx = ExecContext::new(&codegen.buffer);
-    std::process::exit(exec_ctx.invoke() as i32);
+    if args.gen {
+        let mut codegen = Codegen::new(ir_context);
+        codegen.codegen_mem()?;
+
+        let exec_ctx = ExecContext::new(&codegen.buffer);
+        std::process::exit(exec_ctx.invoke() as i32);
+    }
+
+    Ok(())
 }

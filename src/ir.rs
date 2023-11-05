@@ -3,19 +3,9 @@ use anyhow::anyhow;
 use anyhow::Result;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io::Write;
 use std::rc::Rc;
-
-#[macro_export]
-macro_rules! check_len {
-    ($list:expr, $n:expr) => {
-        if $list.len() != $n {
-            Err(anyhow!(IrErrors::UnknownExpression))
-        } else {
-            Ok(())
-        }
-    };
-}
 
 #[derive(Debug)]
 enum IrErrors {
@@ -32,6 +22,7 @@ enum IrErrors {
     BadConditionType,
     BadBodyType,
     MissingReturnType,
+    FunctionNotFound,
 }
 
 impl std::fmt::Display for IrErrors {
@@ -53,11 +44,12 @@ impl std::fmt::Display for IrErrors {
                 "Body return type doesn't match the function return type."
             ),
             Self::MissingReturnType => write!(f, "function is missing return function"),
+            Self::FunctionNotFound => write!(f, "called function cannot be found."),
         }
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
 pub enum Type {
     Int,
     Byte,
@@ -85,6 +77,7 @@ pub enum Binop {
     Multiply,
     Divide,
     GT,
+    LE,
 }
 
 impl std::str::FromStr for Binop {
@@ -97,6 +90,7 @@ impl std::str::FromStr for Binop {
             "/" => Ok(Self::Divide),
             "*" => Ok(Self::Multiply),
             "gt" => Ok(Self::GT),
+            "le" => Ok(Self::LE),
             _ => Err(anyhow!("unsupported binary operation")),
         }
     }
@@ -110,6 +104,7 @@ impl std::fmt::Display for Binop {
             Self::Divide => write!(f, "/"),
             Self::Plus => write!(f, "+"),
             Self::GT => write!(f, "gt"),
+            Self::LE => write!(f, "le"),
         }
     }
 }
@@ -149,6 +144,7 @@ pub enum Instruction {
     Jmpf(i64, i64),
     Jmp(i64),
     Ret(i64),
+    Call(i64, i64, i64, i64),
 }
 
 impl std::fmt::Display for Instruction {
@@ -166,6 +162,7 @@ impl std::fmt::Display for Instruction {
             Self::Jmp(l) => write!(f, "jmp L{}", l),
             Self::Jmpf(a, b) => write!(f, "jmpf {} L{}", a, b),
             Self::Ret(a) => write!(f, "ret {}", a),
+            Self::Call(a, b, c, d) => write!(f, "call {} {} {} {}", a, b, c, d),
         }
     }
 }
@@ -223,6 +220,7 @@ pub struct Func<'a> {
     level: i64,
     return_type: Option<Types>,
     funcs: Vec<usize>, // the id's in the IrContext
+    index: usize,
     pub labels: Vec<Option<i64>>,
     pub instructions: Vec<Instruction>,
 }
@@ -239,11 +237,13 @@ impl<'a> Func<'a> {
             prev: prev_fn,
             funcs: Vec::new(),
             labels: Vec::new(),
+            index: 0,
         };
 
         if let Some(ref p) = func.prev {
-            func.level = p.borrow().level + 1;
-            func.funcs = p.borrow().funcs.clone()
+            let borrow = p.borrow();
+            func.level = borrow.level + 1;
+            func.funcs = borrow.funcs.clone()
         }
 
         func
@@ -311,9 +311,16 @@ impl<'a> Func<'a> {
     }
 }
 
+fn has_common_type(vec1: &Vec<Type>, vec2: &Vec<Type>) -> bool {
+    let set1: HashSet<_> = vec1.iter().cloned().collect();
+    vec2.iter().any(|item| set1.contains(item))
+}
+
 pub struct IrContext<'a> {
     pub funcs: Vec<Rc<RefCell<Func<'a>>>>, // functions in a given context.
     pub curr: Rc<RefCell<Func<'a>>>,
+
+    fn_name_to_idx: HashMap<&'a str, usize>,
 }
 
 impl<'a> IrContext<'a> {
@@ -321,6 +328,7 @@ impl<'a> IrContext<'a> {
         let mut ir_context = Self {
             curr: starting_func.clone(),
             funcs: Vec::new(),
+            fn_name_to_idx: HashMap::new(),
         };
 
         ir_context.funcs.push(starting_func);
@@ -381,27 +389,16 @@ impl<'a> IrContext<'a> {
 
         match arg {
             "do" | "then" | "else" => self.comp_scope(sexpr),
-            "var" => {
-                check_len!(list, 3)?;
+            "var" if list.len() == 3 => {
                 if !allow_var {
                     Err(anyhow!(IrErrors::ForbiddenVariableDeclaration))
                 } else {
                     self.comp_newvar(sexpr)
                 }
             }
-            "set" => {
-                check_len!(list, 3)?;
-                self.comp_setvar(sexpr)
-            }
-            "if" => {
-                if list.len() == 3 || list.len() == 4 {
-                    self.comp_cond(sexpr)
-                } else {
-                    Err(anyhow!(IrErrors::UnknownExpression))
-                }
-            }
-            "break" => {
-                check_len!(list, 1)?;
+            "set" if list.len() == 3 => self.comp_setvar(sexpr),
+            "if" if list.len() == 3 || list.len() == 4 => self.comp_cond(sexpr),
+            "break" if list.len() == 1 => {
                 if self.curr.borrow().scope.borrow().loop_end < 0 {
                     Err(anyhow!(IrErrors::BreakOutsideLoop))
                 } else {
@@ -409,8 +406,7 @@ impl<'a> IrContext<'a> {
                     Ok((vec![Type::Void], -1))
                 }
             }
-            "continue" => {
-                check_len!(list, 1)?;
+            "continue" if list.len() == 1 => {
                 if self.curr.borrow().scope.borrow().loop_start < 0 {
                     Err(anyhow!(IrErrors::ContinueOutsideLoop))
                 } else {
@@ -420,11 +416,12 @@ impl<'a> IrContext<'a> {
                     Ok((vec![Type::Void], -1))
                 }
             }
-            "loop" => {
-                check_len!(list, 3)?;
-                self.comp_loop(sexpr)
+            "loop" if list.len() == 3 => self.comp_loop(sexpr),
+            "call" if list.len() >= 2 => self.comp_call(sexpr),
+            _ => {
+                println!("{:?}", sexpr);
+                Err(anyhow!(IrErrors::UnknownExpression))
             }
-            _ => Err(anyhow!(IrErrors::UnknownExpression)),
         }
     }
 
@@ -482,12 +479,13 @@ impl<'a> IrContext<'a> {
 
         let mut groups: Vec<Vec<usize>> = vec![Vec::new()];
         for (idx, child) in list[1..].iter().enumerate() {
-            let child_list = child.as_list()?;
             let last_index = groups.len() - 1;
             groups[last_index].push(idx + 1);
 
-            if child_list[0].as_str()? == "var" {
-                groups.push(Vec::new());
+            if let Ok(child_list) = child.as_list() {
+                if child_list[0].as_str()? == "var" {
+                    groups.push(Vec::new());
+                }
             }
         }
 
@@ -612,16 +610,15 @@ impl<'a> IrContext<'a> {
                 fn_mut.mov(a2, st);
             }
         }
-        {
-            let mut fn_mut = self.curr.borrow_mut();
-            fn_mut.set_label(label_true);
-            fn_mut.leave_scope();
-        }
 
-        if a1 < 0 || a2 < 0 || t1 != t2 {
+        let mut fn_mut = self.curr.borrow_mut();
+        fn_mut.set_label(label_true);
+        fn_mut.leave_scope();
+
+        if a1 < 0 || a2 < 0 || !has_common_type(&t1, &t2) {
             Ok((vec![Type::Void], -1))
         } else {
-            Ok((t1, self.curr.borrow_mut().tmp()))
+            Ok((t1, fn_mut.tmp()))
         }
     }
 
@@ -637,7 +634,7 @@ impl<'a> IrContext<'a> {
         {
             self.curr.borrow_mut().stack = save;
         }
-        if !(lhs.0 == rhs.0 && (lhs.0[0] == Type::Int || lhs.0[0] == Type::Byte)) {
+        if !(has_common_type(&lhs.0, &rhs.0) && (lhs.0[0] == Type::Int || lhs.0[0] == Type::Byte)) {
             Err(anyhow!(IrErrors::BadBinopTypes))
         } else {
             let dst = { self.curr.borrow_mut().tmp() };
@@ -661,16 +658,42 @@ impl<'a> IrContext<'a> {
         }
         let mut fn_borrow = self.curr.borrow_mut();
         fn_borrow.stack -= arg_types.len() as i64;
-        let (_, idx) = fn_borrow.get_var(fn_name)?;
 
-        let call_fn_borrow = self.funcs[idx as usize].borrow();
+        let call_fn_idx = self
+            .fn_name_to_idx
+            .get(fn_name)
+            .ok_or(anyhow!(IrErrors::FunctionNotFound))?;
 
-        let mut dst: i64 = -1;
-        if call_fn_borrow.return_type.clone().unwrap() != vec![Type::Void] {
-            dst = fn_borrow.tmp();
+        if *call_fn_idx == fn_borrow.index {
+            let (fn_stack, fn_level) = (fn_borrow.stack, fn_borrow.level);
+            fn_borrow.instructions.push(Instruction::Call(
+                *call_fn_idx as i64,
+                fn_stack,
+                fn_level,
+                fn_level,
+            ));
+            let mut dst: i64 = -1;
+            if fn_borrow.return_type.clone().unwrap() != vec![Type::Void] {
+                dst = fn_borrow.tmp();
+            }
+            Ok((fn_borrow.return_type.clone().unwrap(), dst))
+        } else {
+            let mut call_fn_borrow = self.funcs[*call_fn_idx].borrow_mut();
+            let call_fn_level = call_fn_borrow.level;
+            call_fn_borrow.instructions.push(Instruction::Call(
+                *call_fn_idx as i64,
+                fn_borrow.stack,
+                fn_borrow.level,
+                call_fn_level,
+            ));
+
+            let mut dst: i64 = -1;
+            if call_fn_borrow.return_type.clone().unwrap() != vec![Type::Void] {
+                dst = fn_borrow.tmp();
+            }
+
+            Ok((call_fn_borrow.return_type.clone().unwrap(), dst))
         }
-
-        Ok((call_fn_borrow.return_type.clone().unwrap(), dst))
     }
 
     pub fn scan_func(&mut self, sexpr: &SExp<'a>) -> Result<Rc<RefCell<Func<'a>>>> {
@@ -688,8 +711,10 @@ impl<'a> IrContext<'a> {
 
         let mut scanned_func = Func::new(Some(self.curr.clone()));
         scanned_func.return_type = Some(vec![ty]);
+        scanned_func.index = self.funcs.len();
         let scanned_func = Rc::new(RefCell::new(scanned_func));
         self.new_func(scanned_func.clone());
+        self.fn_name_to_idx.insert(fn_name, self.funcs.len() - 1);
 
         Ok(scanned_func)
     }
@@ -717,7 +742,7 @@ impl<'a> IrContext<'a> {
         let mut fn_borrow = self.curr.borrow_mut();
 
         if let Some(ret_type) = fn_borrow.return_type.clone() {
-            if ret_type != vec![Type::Void] && !body_type.contains(&ret_type[0]) {
+            if ret_type != vec![Type::Void] && !has_common_type(&body_type, &ret_type) {
                 return Err(anyhow!(IrErrors::BadBodyType));
             }
 
@@ -760,21 +785,21 @@ impl<'a> IrContext<'a> {
         Ok(())
     }
 
-    pub fn gen_ir<W: Write>(writer: W, input: &str) -> Result<()> {
-        let input_str = format!("(def (main int) () (do {}))", input);
-        let parse_ctx = &mut ParseContext::new(input_str.as_str());
-        let parsed_expressions = SExp::parse(parse_ctx).unwrap();
-
-        println!("{:?}", parsed_expressions);
-
-        let top_level_func = Rc::new(RefCell::new(Func::new(None)));
-        let mut ir_context = IrContext::new(top_level_func);
-
-        let func = ir_context.scan_func(&parsed_expressions)?;
-        ir_context.curr = func;
-        ir_context.comp_func(&parsed_expressions)?;
-        ir_context.dump_instructions(writer)?;
-
-        Ok(())
-    }
+    // pub fn gen_ir<W: Write>(writer: W, input: &str) -> Result<()> {
+    //     let input_str = format!("(def (main int) () (do {}))", input);
+    //     let parse_ctx = &mut ParseContext::new(input_str.as_str());
+    //     let parsed_expressions = SExp::parse(parse_ctx).unwrap();
+    //
+    //     println!("{:?}", parsed_expressions);
+    //
+    //     let top_level_func = Rc::new(RefCell::new(Func::new(None)));
+    //     let mut ir_context = IrContext::new(top_level_func);
+    //
+    //     let func = ir_context.scan_func(&parsed_expressions)?;
+    //     ir_context.curr = func;
+    //     ir_context.comp_func(&parsed_expressions)?;
+    //     ir_context.dump_instructions(writer)?;
+    //
+    //     Ok(())
+    // }
 }

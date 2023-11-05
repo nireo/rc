@@ -10,3 +10,4 @@ typed-arena = "2.0.2"
 anyhow = "1.0"
 byteorder = "1"
 libc = "0.2"
+clap = { version = "4.4.7", features = ["derive"] }
