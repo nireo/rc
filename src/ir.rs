@@ -432,15 +432,13 @@ impl<'a> IrContext<'a> {
             let mut curr_fn_mut = self.curr.borrow_mut();
             let loop_start_label = curr_fn_mut.new_label();
             let loop_end_label = curr_fn_mut.new_label();
+
+            let mut scope_borrow = curr_fn_mut.scope.borrow_mut();
+            scope_borrow.loop_start = loop_start_label;
+            scope_borrow.loop_end = loop_end_label;
+
             (loop_start_label, loop_end_label)
         };
-
-        {
-            let fn_ref = self.curr.borrow();
-            let mut scope_borrow = fn_ref.scope.borrow_mut();
-            scope_borrow.loop_start = loop_start;
-            scope_borrow.loop_end = loop_end;
-        }
 
         {
             let mut fn_borrow = self.curr.borrow_mut();
@@ -456,8 +454,13 @@ impl<'a> IrContext<'a> {
             self.emit(Instruction::Jmpf(var, loop_end));
         }
 
-        let _ = self.comp_expr(&list[2], false)?;
+        {
+            let fn_borrow = self.curr.borrow();
+            let scope_borrow = fn_borrow.scope.borrow_mut();
+            println!("{} {}", scope_borrow.loop_start, scope_borrow.loop_end);
+        }
 
+        self.comp_expr(&list[2], false)?;
         {
             self.emit(Instruction::Jmp(loop_start));
         }
@@ -763,12 +766,12 @@ impl<'a> IrContext<'a> {
         for (idx, func) in self.funcs[1..].iter().enumerate() {
             let fn_borrow = func.borrow();
             writeln!(writer, "func{}:", idx)?;
-            let mut positions_to_labels: HashMap<usize, Vec<i64>> = HashMap::new();
+            let mut positions_to_labels: HashMap<usize, Vec<usize>> = HashMap::new();
             for (pos, label) in fn_borrow.labels.iter().enumerate() {
                 positions_to_labels
-                    .entry(pos)
-                    .or_insert_with(|| Vec::new())
-                    .push(label.unwrap());
+                    .entry(label.unwrap() as usize)
+                    .or_insert_with(Vec::new)
+                    .push(pos);
             }
 
             for (pos, instr) in fn_borrow.instructions.iter().enumerate() {
