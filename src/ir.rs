@@ -647,6 +647,32 @@ impl<'a> IrContext<'a> {
         }
     }
 
+    fn comp_call(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
+        let list = sexpr.as_list()?;
+        let fn_name = list[1].as_str()?;
+
+        let mut arg_types: Vec<Types> = Vec::new();
+        for child in &list[2..] {
+            let (tp, var) = self.comp_expr(child, false)?;
+            arg_types.push(tp);
+            let mut fn_borrow = self.curr.borrow_mut();
+            let tmp = fn_borrow.tmp();
+            fn_borrow.mov(var, tmp);
+        }
+        let mut fn_borrow = self.curr.borrow_mut();
+        fn_borrow.stack -= arg_types.len() as i64;
+        let (_, idx) = fn_borrow.get_var(fn_name)?;
+
+        let call_fn_borrow = self.funcs[idx as usize].borrow();
+
+        let mut dst: i64 = -1;
+        if call_fn_borrow.return_type.clone().unwrap() != vec![Type::Void] {
+            dst = fn_borrow.tmp();
+        }
+
+        Ok((call_fn_borrow.return_type.clone().unwrap(), dst))
+    }
+
     pub fn scan_func(&mut self, sexpr: &SExp<'a>) -> Result<Rc<RefCell<Func<'a>>>> {
         let list = sexpr.as_list()?;
         let fn_info = list[1].as_list()?;
