@@ -76,8 +76,15 @@ pub enum Binop {
     Minus,
     Multiply,
     Divide,
+    Modulo,
+    And,
+    Or,
     GT,
     LE,
+    EQ,
+    NE,
+    LT,
+    GE,
 }
 
 impl std::str::FromStr for Binop {
@@ -89,8 +96,15 @@ impl std::str::FromStr for Binop {
             "-" => Ok(Self::Minus),
             "/" => Ok(Self::Divide),
             "*" => Ok(Self::Multiply),
+            "%" => Ok(Self::Modulo),
             "gt" => Ok(Self::GT),
             "le" => Ok(Self::LE),
+            "lt" => Ok(Self::LT),
+            "eq" => Ok(Self::EQ),
+            "ne" => Ok(Self::NE),
+            "ge" => Ok(Self::GE),
+            "and" => Ok(Self::And),
+            "or" => Ok(Self::Or),
             _ => Err(anyhow!("unsupported binary operation")),
         }
     }
@@ -105,6 +119,13 @@ impl std::fmt::Display for Binop {
             Self::Plus => write!(f, "+"),
             Self::GT => write!(f, "gt"),
             Self::LE => write!(f, "le"),
+            Self::EQ => write!(f, "eq"),
+            Self::LT => write!(f, "lt"),
+            Self::Modulo => write!(f, "%"),
+            Self::NE => write!(f, "ne"),
+            Self::GE => write!(f, "ge"),
+            Self::And => write!(f, "and"),
+            Self::Or => write!(f, "or"),
         }
     }
 }
@@ -787,22 +808,4 @@ impl<'a> IrContext<'a> {
         }
         Ok(())
     }
-
-    // pub fn gen_ir<W: Write>(writer: W, input: &str) -> Result<()> {
-    //     let input_str = format!("(def (main int) () (do {}))", input);
-    //     let parse_ctx = &mut ParseContext::new(input_str.as_str());
-    //     let parsed_expressions = SExp::parse(parse_ctx).unwrap();
-    //
-    //     println!("{:?}", parsed_expressions);
-    //
-    //     let top_level_func = Rc::new(RefCell::new(Func::new(None)));
-    //     let mut ir_context = IrContext::new(top_level_func);
-    //
-    //     let func = ir_context.scan_func(&parsed_expressions)?;
-    //     ir_context.curr = func;
-    //     ir_context.comp_func(&parsed_expressions)?;
-    //     ir_context.dump_instructions(writer)?;
-    //
-    //     Ok(())
-    // }
 }

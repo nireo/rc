@@ -156,15 +156,71 @@ impl<'a> Codegen<'a> {
         .cloned()
         .collect();
 
+        let cmp: HashMap<Binop, u8> = [
+            (Binop::EQ, 0x94),
+            (Binop::NE, 0x95),
+            (Binop::GE, 0x9d),
+            (Binop::GT, 0x9f),
+            (Binop::LE, 0x9e),
+            (Binop::LT, 0x9c),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
         match op {
+            Binop::Divide | Binop::Modulo => {
+                // xor edx, dex | idiv rax, [rbx + a2 * 8]
+                self.buffer
+                    .extend_from_slice(&[0x31, 0xd2, 0x48, 0xf7, 0xbb]);
+                self.buffer.write_i32::<LittleEndian>(a2 as i32 * 8)?;
+                if op == Binop::Modulo {
+                    self.buffer.extend_from_slice(&[0x48, 0x89, 0xd0]);
+                }
+            }
+            Binop::And => {
+                self.buffer
+                    .extend_from_slice(&[0x48, 0x85, 0xc0, 0x0f, 0x95, 0xc0]);
+                self.asm_load(REG_D, REG_B, a2 * 8)?;
+                self.buffer.extend_from_slice(&[
+                    0x48, 0x85, 0xd2, // test rdx, rdx
+                    0x0f, 0x95, 0xc2, // setne dl
+                    0x21, 0xd0, // and eax, edx
+                    0x0f, 0xb6, 0xc0, // movzx eax, al
+                ]);
+            }
+            Binop::Or => {
+                self.asm_disp(vec![0x48, 0x0b], REG_A, REG_B, a2 * 8)?;
+                self.buffer.extend_from_slice(&[
+                    0x0f, 0x95, 0xc0, // setne el
+                    0x0f, 0xb6, 0xc0, // movzx eax, al
+                ]);
+            }
             _ if arith.contains_key(&op) => {
+                // op rax, [rbx + a2*8]
                 self.asm_disp(arith[&op].clone(), REG_A, REG_B, a2 * 8)?
+            }
+            _ if cmp.contains_key(&op) => {
+                // cmp rax, [rbx + a2*8]
+                self.asm_disp(vec![0x48, 0x3b], REG_A, REG_B, a2 * 8)?;
+                // setcc al | movzx eax, al
+                self.buffer
+                    .extend_from_slice(&[0x0f, cmp[&op].clone(), 0xc0, 0x0f, 0xb6, 0xc0]);
             }
             // TODO: rest of the operations
             _ => (),
         }
 
-        Ok(())
+        self.store_rax(dst)
+    }
+
+    fn jmp(&mut self, label: i64) {
+        self.buffer.push(0xe9); // jmp
+        self.jumps
+            .entry(label)
+            .or_insert_with(Vec::new)
+            .push(self.buffer.len());
+        self.buffer.extend_from_slice(&[0, 0, 0, 0]);
     }
 
     fn asm_disp(&mut self, mut lead: Vec<u8>, mut reg: u8, mut rm: u8, disp: i64) -> Result<()> {
