@@ -2,6 +2,7 @@
 extern crate libc;
 
 use crate::ir::*;
+use anyhow::anyhow;
 use anyhow::Result;
 use byteorder::{LittleEndian, WriteBytesExt};
 use std::cell::RefCell;
@@ -9,6 +10,13 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
 use std::rc::Rc;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+enum CodegenErrors {
+    #[error("unknown binop operation")]
+    UnknownBinop,
+}
 
 const REG_A: u8 = 0;
 const REG_C: u8 = 1;
@@ -99,6 +107,8 @@ impl<'a> Codegen<'a> {
                 Instruction::Ret(a) => self.ret(*a)?,
                 Instruction::Binop(op, a1, a2, dst, _) => self.binop(op.clone(), *a1, *a2, *dst)?,
                 Instruction::Mov(src, dst) => self.mov(*src, *dst)?,
+                Instruction::Jmp(label) => self.jmp(*label),
+                Instruction::Jmpf(a1, label) => self.jmpf(*a1, *label)?,
                 _ => panic!("instruction not handled"),
             }
         }
@@ -207,11 +217,24 @@ impl<'a> Codegen<'a> {
                 self.buffer
                     .extend_from_slice(&[0x0f, cmp[&op].clone(), 0xc0, 0x0f, 0xb6, 0xc0]);
             }
-            // TODO: rest of the operations
-            _ => (),
+            _ => return Err(anyhow!(CodegenErrors::UnknownBinop)),
         }
 
         self.store_rax(dst)
+    }
+
+    fn jmpf(&mut self, a1: i64, label: i64) -> Result<()> {
+        self.load_rax(a1)?;
+        self.buffer.extend_from_slice(&[
+            0x48, 0x85, 0xc0, // test rax, rax
+            0x0f, 0x84, // je
+        ]);
+        self.jumps
+            .entry(label)
+            .or_insert_with(Vec::new)
+            .push(self.buffer.len());
+        self.buffer.extend_from_slice(&[0, 0, 0, 0]);
+        Ok(())
     }
 
     fn jmp(&mut self, label: i64) {

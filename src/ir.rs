@@ -6,47 +6,38 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::Write;
 use std::rc::Rc;
+use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 enum IrErrors {
+    #[error("Duplicate variable name")]
     DuplicateName,
+    #[error("Unknown expression")]
     UnknownExpression,
+    #[error("Bad binop types")]
     BadBinopTypes,
+    #[error("Forbidden variable declaration")]
     ForbiddenVariableDeclaration,
+    #[error("Bad variable init type")]
     BadVariableInitType,
+    #[error("Bad variable set type")]
     BadVariableSetType,
+    #[error("Variable not found")]
     VariableNotFound,
+    #[error("Expected boolean condition")]
     ExpectedBooleanCondition,
+    #[error("Break used outside of loop")]
     BreakOutsideLoop,
+    #[error("Continue used outside of loop")]
     ContinueOutsideLoop,
+    #[error("Bad condition type")]
     BadConditionType,
+    #[error("Bad body type")]
     BadBodyType,
+    #[error("Missing return type")]
     MissingReturnType,
+    #[error("Function not found")]
     FunctionNotFound,
-}
-
-impl std::fmt::Display for IrErrors {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::DuplicateName => write!(f, "Duplicate variable name"),
-            Self::UnknownExpression => write!(f, "unknown expression"),
-            Self::BadBinopTypes => write!(f, "Unsuitable binop types"),
-            Self::ForbiddenVariableDeclaration => write!(f, "Forbidden variable declaration"),
-            Self::BadVariableInitType => write!(f, "Bad variable init type"),
-            Self::VariableNotFound => write!(f, "Variable not found"),
-            Self::BadVariableSetType => write!(f, "Bad variable set type"),
-            Self::ExpectedBooleanCondition => write!(f, "Expected boolean condition"),
-            Self::BreakOutsideLoop => write!(f, "Break outside loop"),
-            Self::ContinueOutsideLoop => write!(f, "Continue outside loop"),
-            Self::BadConditionType => write!(f, "Bad condition type"),
-            Self::BadBodyType => write!(
-                f,
-                "Body return type doesn't match the function return type."
-            ),
-            Self::MissingReturnType => write!(f, "function is missing return function"),
-            Self::FunctionNotFound => write!(f, "called function cannot be found."),
-        }
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
