@@ -19,12 +19,15 @@ struct Args {
 
     #[arg(long, default_value_t = false)]
     dump_ir: bool,
+
+    #[arg(short, long)]
+    file_path: String,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let input = "(var a 1) (set a (+ 3 a)) (var b 2) (- b a)";
+    let input = std::fs::read_to_string(args.file_path)?;
 
     let input_str = format!("(def (main int) () (do {}))", input);
     let parse_ctx = &mut ParseContext::new(input_str.as_str());

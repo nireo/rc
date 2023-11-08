@@ -1,0 +1,2 @@
+(def (fib int) ((n int)) (if (le n 0) (then 0) (else (call fib (- n 1)))))
+(call fib 5)

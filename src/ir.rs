@@ -523,6 +523,8 @@ impl<'a> IrContext<'a> {
                     // Switch context and compile the function body.
                     self.curr = func.0.clone();
                     (tp, var) = self.comp_func(&list[child])?;
+                    // Go back to outer function context.
+                    self.curr = paren_func.clone();
                 } else {
                     // Normal expression
                     (tp, var) = self.comp_expr(&list[child], true)?;
@@ -530,8 +532,6 @@ impl<'a> IrContext<'a> {
             }
         }
 
-        // Go back to outer function context.
-        self.curr = paren_func;
         let mut fn_borrow = self.curr.borrow_mut();
         fn_borrow.leave_scope();
 
@@ -693,12 +693,14 @@ impl<'a> IrContext<'a> {
             }
             Ok((fn_borrow.return_type.clone().unwrap(), dst))
         } else {
-            let mut call_fn_borrow = self.funcs[*call_fn_idx].borrow_mut();
+            let call_fn_borrow = self.funcs[*call_fn_idx].borrow_mut();
             let call_fn_level = call_fn_borrow.level;
-            call_fn_borrow.instructions.push(Instruction::Call(
+            let (fn_stack, fn_level) = (fn_borrow.stack, fn_borrow.level);
+
+            fn_borrow.instructions.push(Instruction::Call(
                 *call_fn_idx as i64,
-                fn_borrow.stack,
-                fn_borrow.level,
+                fn_stack,
+                fn_level,
                 call_fn_level,
             ));
 
@@ -779,11 +781,11 @@ impl<'a> IrContext<'a> {
             let fn_borrow = func.borrow();
             writeln!(writer, "func{}:", idx)?;
             let mut positions_to_labels: HashMap<usize, Vec<usize>> = HashMap::new();
-            for (pos, label) in fn_borrow.labels.iter().enumerate() {
+            for (label, pos) in fn_borrow.labels.iter().enumerate() {
                 positions_to_labels
-                    .entry(label.unwrap() as usize)
+                    .entry(pos.unwrap() as usize)
                     .or_insert_with(Vec::new)
-                    .push(pos);
+                    .push(label);
             }
 
             for (pos, instr) in fn_borrow.instructions.iter().enumerate() {
