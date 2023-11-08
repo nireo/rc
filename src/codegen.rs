@@ -43,7 +43,7 @@ impl<'a> Codegen<'a> {
             buffer: Vec::new(),
             jumps: HashMap::new(),
             calls: HashMap::new(),
-            fn_to_offset: Vec::new(),
+            fn_to_offset: vec![0],
             ir_context,
             alignment: 16,
         }
@@ -109,7 +109,9 @@ impl<'a> Codegen<'a> {
                 Instruction::Mov(src, dst) => self.mov(*src, *dst)?,
                 Instruction::Jmp(label) => self.jmp(*label),
                 Instruction::Jmpf(a1, label) => self.jmpf(*a1, *label)?,
-                _ => panic!("instruction not handled"),
+                Instruction::Call(index, arg_start, level_curr, level_new) => {
+                    self.call(*index, *arg_start, *level_curr, *level_new)?
+                }
             }
         }
 
@@ -135,6 +137,38 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    fn call(&mut self, index: i64, arg_start: i64, level_curr: i64, level_new: i64) -> Result<()> {
+        // put a list of pointers to outer frames in the rsp stack
+        if level_new > level_curr {
+            self.buffer.push(0x53); // push rbx
+        }
+
+        for _ in 0..(std::cmp::min(level_new, level_curr) - 1) {
+            // copy previous list
+            self.buffer.extend_from_slice(&[0xff, 0xb4, 0x24]);
+            self.buffer
+                .write_i32::<LittleEndian>((level_new as i32 - 1) * 8)?;
+        }
+
+        // make new frame and call the targer
+        if arg_start != 0 {
+            self.buffer.extend_from_slice(&[0x48, 0x81, 0xc3]); // add rbx, arg_start * 8
+            self.buffer
+                .write_i32::<LittleEndian>(arg_start as i32 * 8)?;
+        }
+        self.asm_call(index)?;
+        if arg_start != 0 {
+            self.buffer.extend_from_slice(&[0x48, 0x81, 0xc3]); // add rbx, -arg_start * 8
+            self.buffer
+                .write_i32::<LittleEndian>(-arg_start as i32 * 8)?;
+        }
+
+        self.buffer.extend_from_slice(&[0x48, 0x81, 0xc4]);
+        self.buffer
+            .write_i32::<LittleEndian>((level_new as i32 - 1) * 8)?;
+        Ok(())
+    }
+
     fn constant(&mut self, val: i64, dst: i64) -> Result<()> {
         if val == 0 {
             self.buffer.extend_from_slice(&[0x31, 0xc0]);
@@ -150,8 +184,7 @@ impl<'a> Codegen<'a> {
             self.buffer.extend_from_slice(&[0x48, 0xb8]);
             self.buffer.write_i64::<LittleEndian>(val)?;
         }
-        self.store_rax(dst)?;
-        Ok(())
+        self.store_rax(dst)
     }
 
     fn binop(&mut self, op: Binop, a1: i64, a2: i64, dst: i64) -> Result<()> {
