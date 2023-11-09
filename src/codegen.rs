@@ -60,9 +60,9 @@ impl<'a> Codegen<'a> {
 
     fn mem_end(&mut self) {
         for (label, offset_list) in &self.calls {
-            let dst_offset = self.fn_to_offset[*label as usize];
+            let dst_offset = self.fn_to_offset[*label as usize] as i32;
             for patch_off in offset_list {
-                let src_offset = patch_off + 4;
+                let src_offset = *patch_off as i32 + 4;
                 let rel = ((dst_offset - src_offset) as i32).to_le_bytes();
                 self.buffer[*patch_off..*patch_off + 4].copy_from_slice(&rel);
             }
@@ -112,6 +112,7 @@ impl<'a> Codegen<'a> {
                 Instruction::Call(index, arg_start, level_curr, level_new) => {
                     self.call(*index, *arg_start, *level_curr, *level_new)?
                 }
+                Instruction::Unop(op, a1, dst) => self.unop(op.clone(), *a1, *dst)?,
             }
         }
 
@@ -135,6 +136,24 @@ impl<'a> Codegen<'a> {
         }
         self.buffer.push(0xc3);
         Ok(())
+    }
+
+    fn unop(&mut self, operation: Unop, a1: i64, dst: i64) -> Result<()> {
+        self.load_rax(a1)?;
+        match operation {
+            Unop::Not => {
+                self.buffer.extend_from_slice(&[
+                    0x48, 0x85, 0xc0, // test rax, rax
+                    0x0f, 0x94, 0xc0, // sete al
+                    0x0f, 0xb6, 0xc0, // movzx eax, al
+                ]);
+            }
+            Unop::Minus => {
+                self.buffer.extend_from_slice(&[0x48, 0xf7, 0xd8]); // neg rax
+            }
+        }
+
+        self.store_rax(dst)
     }
 
     fn call(&mut self, index: i64, arg_start: i64, level_curr: i64, level_new: i64) -> Result<()> {

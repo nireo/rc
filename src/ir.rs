@@ -12,32 +12,48 @@ use thiserror::Error;
 enum IrErrors {
     #[error("Duplicate variable name")]
     DuplicateName,
+
     #[error("Unknown expression")]
     UnknownExpression,
+
     #[error("Bad binop types")]
     BadBinopTypes,
+
     #[error("Forbidden variable declaration")]
     ForbiddenVariableDeclaration,
+
     #[error("Bad variable init type")]
     BadVariableInitType,
+
     #[error("Bad variable set type")]
     BadVariableSetType,
+
     #[error("Variable not found")]
     VariableNotFound,
+
     #[error("Expected boolean condition")]
     ExpectedBooleanCondition,
+
     #[error("Break used outside of loop")]
     BreakOutsideLoop,
+
     #[error("Continue used outside of loop")]
     ContinueOutsideLoop,
+
     #[error("Bad condition type")]
     BadConditionType,
+
     #[error("Bad body type")]
     BadBodyType,
+
     #[error("Missing return type")]
     MissingReturnType,
+
     #[error("Function not found")]
     FunctionNotFound,
+
+    #[error("bad unop types")]
+    BadUnopTypes,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
@@ -121,7 +137,7 @@ impl std::fmt::Display for Binop {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Unop {
     Minus,
     Not,
@@ -157,6 +173,7 @@ pub enum Instruction {
     Jmp(i64),
     Ret(i64),
     Call(i64, i64, i64, i64),
+    Unop(Unop, i64, i64),
 }
 
 impl std::fmt::Display for Instruction {
@@ -175,6 +192,7 @@ impl std::fmt::Display for Instruction {
             Self::Jmpf(a, b) => write!(f, "jmpf {} L{}", a, b),
             Self::Ret(a) => write!(f, "ret {}", a),
             Self::Call(a, b, c, d) => write!(f, "call {} {} {} {}", a, b, c, d),
+            Self::Unop(a, b, c) => write!(f, "unop {} {} {}", a, b, c),
         }
     }
 }
@@ -396,6 +414,12 @@ impl<'a> IrContext<'a> {
         if list.len() == 3 {
             if let Ok(binary_op) = arg.parse::<Binop>() {
                 return self.comp_binop(sexpr, binary_op);
+            }
+        }
+
+        if list.len() == 2 {
+            if let Ok(op) = arg.parse::<Unop>() {
+                return self.comp_unop(sexpr, op);
             }
         }
 
@@ -659,6 +683,32 @@ impl<'a> IrContext<'a> {
         }
     }
 
+    fn comp_unop(&mut self, sexpr: &SExp<'a>, operation: Unop) -> Result<TypeIndex> {
+        let list = sexpr.as_list()?;
+
+        let (mut t1, a1) = self.comp_expr(&list[1], false)?;
+        match operation {
+            Unop::Minus => {
+                if t1[0] != Type::Int || t1[0] != Type::Byte {
+                    return Err(anyhow!(IrErrors::BadUnopTypes));
+                }
+            }
+            Unop::Not => {
+                if t1[0] != Type::Int || t1[0] != Type::Byte || t1[0] != Type::BytePtr {
+                    return Err(anyhow!(IrErrors::BadUnopTypes));
+                }
+                t1 = vec![Type::Int];
+            }
+        }
+
+        let mut fn_borrow = self.curr.borrow_mut();
+        let dst = fn_borrow.tmp();
+        fn_borrow
+            .instructions
+            .push(Instruction::Unop(operation, a1, dst));
+        Ok((t1, dst))
+    }
+
     fn comp_call(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
         let list = sexpr.as_list()?;
         let fn_name = list[1].as_str()?;
@@ -788,16 +838,20 @@ impl<'a> IrContext<'a> {
                     .push(label);
             }
 
+            // Check if a label exists as the given position.
             for (pos, instr) in fn_borrow.instructions.iter().enumerate() {
-                if let Some(labels) = positions_to_labels.get(&pos) {
-                    for l in labels {
-                        writeln!(writer, "L{}:", *l)?;
+                match positions_to_labels.get(&pos) {
+                    Some(labels) => {
+                        for l in labels {
+                            writeln!(writer, "L{}:", *l)?;
+                        }
                     }
+                    None => {}
                 }
 
                 writeln!(writer, "    {}", instr)?;
             }
-            write!(writer, "\n")?;
+            writeln!(writer)?;
         }
         Ok(())
     }
