@@ -203,7 +203,7 @@ impl std::fmt::Display for Instruction {
 type Types = Vec<Type>;
 type TypeIndex = (Types, i64);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum VariableType {
     Var,
     Const,
@@ -311,15 +311,14 @@ impl<'a> Func<'a> {
     }
 
     // returns the address where the variable resides.
-    fn add_var(&mut self, name: &'a str, ty: Types) -> Result<i64> {
+    fn add_var(&mut self, name: &'a str, ty: Types, variable_type: VariableType) -> Result<i64> {
         if self.scope.borrow().names.contains_key(name) {
             Err(anyhow!(IrErrors::DuplicateName))
         } else {
             let mut scope_mut = self.scope.borrow_mut();
-            scope_mut.names.insert(
-                name,
-                VariableMetadata::new((ty, self.nvar), VariableType::Var),
-            );
+            scope_mut
+                .names
+                .insert(name, VariableMetadata::new((ty, self.nvar), variable_type));
             scope_mut.nlocals += 1;
             assert!((self.stack == self.nvar), "stack is not equal to nvar");
             let dst = self.stack;
@@ -453,11 +452,11 @@ impl<'a> IrContext<'a> {
 
         match arg {
             "do" | "then" | "else" => self.comp_scope(sexpr),
-            "var" if list.len() == 3 => {
+            "var" | "const" if list.len() == 3 => {
                 if !allow_var {
                     Err(anyhow!(IrErrors::ForbiddenVariableDeclaration))
                 } else {
-                    self.comp_newvar(sexpr)
+                    self.comp_newvar(sexpr, arg == "const")
                 }
             }
             "set" if list.len() == 3 => self.comp_setvar(sexpr),
@@ -596,14 +595,19 @@ impl<'a> IrContext<'a> {
         Ok((tp, var))
     }
 
-    fn comp_newvar(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
+    fn comp_newvar(&mut self, sexpr: &SExp<'a>, is_const: bool) -> Result<TypeIndex> {
         let list = sexpr.as_list()?;
         let ti = self.comp_expr(&list[2], false)?;
         if ti.1 < 0 {
             Err(anyhow!(IrErrors::BadVariableInitType))
         } else {
             let mut fn_mut = self.curr.borrow_mut();
-            let dst = fn_mut.add_var(list[1].as_str()?, ti.0.clone())?;
+            let variable_type = if is_const {
+                VariableType::Const
+            } else {
+                VariableType::Var
+            };
+            let dst = fn_mut.add_var(list[1].as_str()?, ti.0.clone(), variable_type)?;
             Ok((ti.0, fn_mut.mov(ti.1, dst)))
         }
     }
@@ -611,10 +615,20 @@ impl<'a> IrContext<'a> {
     fn comp_setvar(&mut self, sexpr: &SExp<'a>) -> Result<TypeIndex> {
         let list = sexpr.as_list()?;
 
-        let (dst_type, dst) = {
+        let var_metadata = {
             let fn_mut = self.curr.borrow_mut();
-            fn_mut.get_var(list[1].as_str()?)?.type_index
+            fn_mut.get_var(list[1].as_str()?)?
         };
+
+        // cannot assign to functions nor const variables
+        if var_metadata.variable_type == VariableType::Const
+            || var_metadata.variable_type == VariableType::Function
+        {
+            return Err(anyhow!(IrErrors::AssignToConst));
+        }
+
+        let (dst_type, dst) = var_metadata.type_index;
+
         let (tp, var) = self.comp_expr(&list[2], false)?;
         if dst_type != tp {
             Err(anyhow!(IrErrors::BadVariableSetType))
@@ -826,7 +840,7 @@ impl<'a> IrContext<'a> {
             let mut fn_borrow = self.curr.borrow_mut();
             for exp in arguments_list.iter().map(|e| e.as_list().unwrap()) {
                 let ty = exp[1].as_str()?.parse::<Type>()?;
-                fn_borrow.add_var(exp[0].as_str()?, vec![ty])?;
+                fn_borrow.add_var(exp[0].as_str()?, vec![ty], VariableType::Function)?;
             }
 
             assert!(
