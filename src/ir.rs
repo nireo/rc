@@ -1,9 +1,7 @@
 use crate::sexpr::*;
-use anyhow::anyhow;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::rc::Rc;
 use thiserror::Error;
@@ -57,6 +55,9 @@ enum IrErrors {
 
     #[error("Trying to reassing const variable.")]
     AssignToConst,
+
+    #[error("Invalid function arguments")]
+    InvalidFunctionArguments,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
@@ -214,6 +215,8 @@ enum VariableType {
 struct VariableMetadata {
     type_index: TypeIndex,
     variable_type: VariableType,
+    // If the variable is a function we check for parameters.
+    parameters: Option<Types>,
 }
 
 impl VariableMetadata {
@@ -221,6 +224,15 @@ impl VariableMetadata {
         Self {
             type_index,
             variable_type,
+            parameters: None,
+        }
+    }
+
+    pub fn new_function(type_index: TypeIndex, parameters: Types) -> Self {
+        Self {
+            type_index,
+            variable_type: VariableType::Function,
+            parameters: Some(parameters),
         }
     }
 }
@@ -765,6 +777,17 @@ impl<'a> IrContext<'a> {
         }
         let mut fn_borrow = self.curr.borrow_mut();
         fn_borrow.stack -= arg_types.len() as i64;
+        let fn_metadata = fn_borrow.scope.borrow().get_var(fn_name)?;
+        let parameter_types = fn_metadata.parameters.unwrap();
+
+        // check that types match
+        if !arg_types
+            .iter()
+            .enumerate()
+            .all(|(index, ref arg_type)| arg_type.contains(&parameter_types[index]))
+        {
+            return Err(anyhow!(IrErrors::InvalidFunctionArguments));
+        }
 
         let call_fn_idx = self
             .fn_name_to_idx
@@ -810,13 +833,30 @@ impl<'a> IrContext<'a> {
         let fn_info = list[1].as_list()?;
         let fn_name = fn_info[0].as_str()?;
         let ty = fn_info[1].as_str()?.parse::<Type>()?;
+
+        // Scan argument types
+        let arguments = list[2].as_list()?;
+        let parameter_types: Result<Vec<Type>, anyhow::Error> = arguments
+            .iter()
+            .map(|arg| {
+                arg.as_list()
+                    .and_then(|l| l[1].as_str())
+                    .and_then(|str_type| str_type.parse::<Type>())
+            })
+            .collect();
+
+        let parameter_types = match parameter_types {
+            Ok(types) => types,
+            Err(e) => return Err(e),
+        };
+
         {
             let func = self.curr.borrow();
             func.scope.borrow_mut().names.insert(
                 fn_name,
-                VariableMetadata::new(
+                VariableMetadata::new_function(
                     (vec![ty.clone()], func.funcs.len() as i64),
-                    VariableType::Function,
+                    parameter_types,
                 ),
             );
         }
