@@ -54,6 +54,9 @@ enum IrErrors {
 
     #[error("bad unop types")]
     BadUnopTypes,
+
+    #[error("Trying to reassing const variable.")]
+    AssignToConst,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
@@ -200,10 +203,32 @@ impl std::fmt::Display for Instruction {
 type Types = Vec<Type>;
 type TypeIndex = (Types, i64);
 
+#[derive(Debug, Clone)]
+enum VariableType {
+    Var,
+    Const,
+    Function,
+}
+
+#[derive(Debug, Clone)]
+struct VariableMetadata {
+    type_index: TypeIndex,
+    variable_type: VariableType,
+}
+
+impl VariableMetadata {
+    pub fn new(type_index: TypeIndex, variable_type: VariableType) -> Self {
+        Self {
+            type_index,
+            variable_type,
+        }
+    }
+}
+
 struct Scope<'a> {
     prev: Option<Rc<RefCell<Scope<'a>>>>,
     nlocals: i64,
-    names: HashMap<&'a str, TypeIndex>,
+    names: HashMap<&'a str, VariableMetadata>,
     save: i64,
     loop_start: i64,
     loop_end: i64,
@@ -228,7 +253,7 @@ impl<'a> Scope<'a> {
         scope
     }
 
-    fn get_var(&self, name: &str) -> Result<TypeIndex> {
+    fn get_var(&self, name: &str) -> Result<VariableMetadata> {
         match self.names.get(name) {
             Some(val) => Ok(val.to_owned()),
             None => {
@@ -291,7 +316,10 @@ impl<'a> Func<'a> {
             Err(anyhow!(IrErrors::DuplicateName))
         } else {
             let mut scope_mut = self.scope.borrow_mut();
-            scope_mut.names.insert(name, (ty, self.nvar));
+            scope_mut.names.insert(
+                name,
+                VariableMetadata::new((ty, self.nvar), VariableType::Var),
+            );
             scope_mut.nlocals += 1;
             assert!((self.stack == self.nvar), "stack is not equal to nvar");
             let dst = self.stack;
@@ -336,7 +364,7 @@ impl<'a> Func<'a> {
         b
     }
 
-    fn get_var(&self, name: &'a str) -> Result<TypeIndex> {
+    fn get_var(&self, name: &'a str) -> Result<VariableMetadata> {
         self.scope.borrow().get_var(name)
     }
 }
@@ -585,7 +613,7 @@ impl<'a> IrContext<'a> {
 
         let (dst_type, dst) = {
             let fn_mut = self.curr.borrow_mut();
-            fn_mut.get_var(list[1].as_str()?)?
+            fn_mut.get_var(list[1].as_str()?)?.type_index
         };
         let (tp, var) = self.comp_expr(&list[2], false)?;
         if dst_type != tp {
@@ -604,7 +632,7 @@ impl<'a> IrContext<'a> {
                 self.emit(Instruction::Constant(*num as i64, dst));
                 Ok((vec![Type::Int, Type::Byte, Type::BytePtr], dst))
             }
-            SExp::Str(s) => self.curr.borrow().get_var(s),
+            SExp::Str(s) => Ok(self.curr.borrow().get_var(s)?.type_index),
         }
     }
 
@@ -770,10 +798,13 @@ impl<'a> IrContext<'a> {
         let ty = fn_info[1].as_str()?.parse::<Type>()?;
         {
             let func = self.curr.borrow();
-            func.scope
-                .borrow_mut()
-                .names
-                .insert(fn_name, (vec![ty.clone()], func.funcs.len() as i64));
+            func.scope.borrow_mut().names.insert(
+                fn_name,
+                VariableMetadata::new(
+                    (vec![ty.clone()], func.funcs.len() as i64),
+                    VariableType::Function,
+                ),
+            );
         }
 
         let mut scanned_func = Func::new(Some(self.curr.clone()));
