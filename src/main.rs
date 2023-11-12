@@ -1,6 +1,5 @@
 mod codegen;
 mod ir;
-mod llvm_ir;
 mod sexpr;
 
 use std::{cell::RefCell, rc::Rc};

@@ -122,6 +122,7 @@ impl<'a> Codegen<'a> {
             for patch_off in offset_list {
                 let src_offset = patch_off + 4;
                 let rel = ((dst_offset - src_offset) as i32).to_le_bytes();
+                println!("{:?}", rel);
                 self.buffer[*patch_off..*patch_off + 4].copy_from_slice(&rel);
             }
         }
@@ -175,7 +176,7 @@ impl<'a> Codegen<'a> {
             self.buffer
                 .write_i32::<LittleEndian>(arg_start as i32 * 8)?;
         }
-        self.asm_call(index)?;
+        self.asm_call(index - 1)?;
         if arg_start != 0 {
             self.buffer.extend_from_slice(&[0x48, 0x81, 0xc3]); // add rbx, -arg_start * 8
             self.buffer
@@ -285,7 +286,7 @@ impl<'a> Codegen<'a> {
             .entry(label)
             .or_insert_with(Vec::new)
             .push(self.buffer.len());
-        self.buffer.extend_from_slice(&[0, 0, 0, 0]);
+        self.buffer.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
         Ok(())
     }
 
@@ -295,7 +296,7 @@ impl<'a> Codegen<'a> {
             .entry(label)
             .or_insert_with(Vec::new)
             .push(self.buffer.len());
-        self.buffer.extend_from_slice(&[0, 0, 0, 0]);
+        self.buffer.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
     }
 
     fn asm_disp(&mut self, mut lead: Vec<u8>, mut reg: u8, mut rm: u8, disp: i64) -> Result<()> {
@@ -364,41 +365,6 @@ impl<'a> Codegen<'a> {
         self.buffer.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
         Ok(())
     }
-
-    // fn create_stack(&mut self, size: i32) -> Result<()> {
-    //     self.buffer.extend_from_slice(&[
-    //         0xb8, 0x09, 0x00, 0x00, 0x00, // mov eax, 9
-    //         // 0x31, 0xff,                   // xor edi, edi      // addr = NULL
-    //         0xbf, 0x00, 0x10, 0x00, 0x00, // mov edi, 4096     // addr
-    //         0x48, 0xc7, 0xc6, // mov rsi, xxx      // len prefix
-    //     ]);
-    //
-    //     self.buffer.extend_from_slice(&(size + 4096).to_le_bytes()); // Adding the len value
-    //
-    //     self.buffer.extend_from_slice(&[
-    //         0xba, 0x03, 0x00, 0x00, 0x00, // mov edx, 3        // prot = PROT_READ|PROT_WRITE
-    //         0x41, 0xba, 0x22, 0x00, 0x00,
-    //         0x00, // mov r10d, 0x22    // flags = MAP_PRIVATE|MAP_ANONYMOUS
-    //         0x49, 0x83, 0xc8, 0xff, // or r8, -1         // fd = -1
-    //         0x4d, 0x31, 0xc9, // xor r9, r9        // offset = 0
-    //         0x0f, 0x05, // syscall
-    //         0x48, 0x89, 0xc3, // mov rbx, rax      // the data stack
-    //     ]);
-    //
-    //     self.buffer.extend_from_slice(&[
-    //         0xb8, 0x0a, 0x00, 0x00, 0x00, // mov eax, 10
-    //         0x48, 0x8d, 0xbb, // lea rdi, [rbx + data] prefix
-    //     ]);
-    //     self.buffer.extend_from_slice(&size.to_le_bytes()); // Adding the data value
-    //
-    //     self.buffer.extend_from_slice(&[
-    //         0xbe, 0x00, 0x10, 0x00, 0x00, // mov esi, 4096
-    //         0x31, 0xd2, // xor edx, edx
-    //         0x0f, 0x05, // syscall
-    //     ]);
-    //
-    //     Ok(())
-    // }
 }
 
 pub struct ExecContext {

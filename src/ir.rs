@@ -777,17 +777,17 @@ impl<'a> IrContext<'a> {
         }
         let mut fn_borrow = self.curr.borrow_mut();
         fn_borrow.stack -= arg_types.len() as i64;
-        let fn_metadata = fn_borrow.scope.borrow().get_var(fn_name)?;
-        let parameter_types = fn_metadata.parameters.unwrap();
-
-        // check that types match
-        if !arg_types
-            .iter()
-            .enumerate()
-            .all(|(index, ref arg_type)| arg_type.contains(&parameter_types[index]))
-        {
-            return Err(anyhow!(IrErrors::InvalidFunctionArguments));
-        }
+        // let fn_metadata = fn_borrow.scope.borrow().get_var(fn_name)?;
+        // let parameter_types = fn_metadata.parameters.unwrap();
+        //
+        // // check that types match
+        // if !arg_types
+        //     .iter()
+        //     .enumerate()
+        //     .all(|(index, ref arg_type)| arg_type.contains(&parameter_types[index]))
+        // {
+        //     return Err(anyhow!(IrErrors::InvalidFunctionArguments));
+        // }
 
         let call_fn_idx = self
             .fn_name_to_idx
