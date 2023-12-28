@@ -108,6 +108,13 @@ impl<'a> SExp<'a> {
         let l = self.as_list()?;
         Ok(l.len() == 4 && l[0].as_str()? == "def")
     }
+
+    pub fn is_number(&self) -> Result<f64> {
+        match self {
+            Self::F64(n) => Ok(*n),
+            _ => Err(anyhow::anyhow!("sexpr is not of type number")),
+        }
+    }
 }
 
 impl<'a> Tokens<'a> {

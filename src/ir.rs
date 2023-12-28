@@ -98,6 +98,23 @@ pub enum Binop {
     GE,
 }
 
+fn calc_binop(op: Binop, a: i64, b: i64) -> Result<i64> {
+    match op {
+        Binop::Plus => Ok(a + b),
+        Binop::Minus => Ok(a - b),
+        Binop::Multiply => Ok(a * b),
+        Binop::Divide => {
+            if b != 0 {
+                Ok(a / b)
+            } else {
+                // Handle division by zero error, for now, returning 0
+                Ok(0)
+            }
+        }
+        _ => Err(anyhow!("cannot do binop")),
+    }
+}
+
 impl std::str::FromStr for Binop {
     type Err = anyhow::Error;
 
@@ -719,6 +736,16 @@ impl<'a> IrContext<'a> {
         // As with most compilation functions this is already ensured to work.
         let list = sexpr.as_list()?;
         let save = { self.curr.borrow().stack };
+
+        // If they're both numbers we can optimize it the same as loding a constant
+        if let (Ok(lhs_number), Ok(rhs_number)) = (list[1].is_number(), list[2].is_number()) {
+            let dst = { self.curr.borrow_mut().tmp() };
+            self.emit(Instruction::Constant(
+                calc_binop(operation, lhs_number as i64, rhs_number as i64)?,
+                dst,
+            ));
+            return Ok((vec![Type::Int, Type::Byte, Type::BytePtr], dst));
+        }
 
         // First element is the argument so that 1 and 2 are lhs and rhs.
         let lhs = self.comp_expr_tmp(&list[1], false)?;

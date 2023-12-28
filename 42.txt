@@ -1,4 +1,1 @@
-(def (foo int) ((n int))
-  (+ n 10))
-
-(call foo 7)
+(+ 10 15)

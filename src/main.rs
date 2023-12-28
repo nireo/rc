@@ -49,6 +49,7 @@ fn main() -> anyhow::Result<()> {
         codegen.codegen_mem()?;
 
         let exec_ctx = ExecContext::new(&codegen.buffer);
+        println!("finished parsing");
         std::process::exit(exec_ctx.invoke() as i32);
     }
 
